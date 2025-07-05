@@ -1,20 +1,24 @@
-# frontend/Dockerfile
-
-# Stage 1: build static assets (opzionale, qui non abbiamo tool di build)
-# usiamo direttamente nginx per servire i file statici
+# Stage 1: build static assets (optional, we have no build tool here)
+# we use nginx directly to serve the static files
 FROM nginx:alpine
 
-# Rimuoviamo la configurazione di default
-RUN rm /etc/nginx/conf.d/default.conf
+# Install envsubst, which is part of the gettext-base package.
+# This tool allows you to replace environment variables in the Nginx configuration file.
+# We remove the default configuration of Nginx.
+RUN apk add --no-cache gettext-base; rm /etc/nginx/conf.d/default.conf
 
-# Copiamo la nostra configurazione
-COPY nginx.conf /etc/nginx/conf.d/
+# We copy our Nginx configuration file as a template.
+# Environment variables will be replaced by envsubst at runtime.
+COPY nginx.conf /etc/nginx/conf.d/nginx.conf.template
 
-# Copiamo i file statici nella directory di nginx
+# We copy the application's static files (HTML, CSS, JS) into the Nginx directory.
 COPY . /usr/share/nginx/html
 
-# Espone la porta 80
+# It exposes port 80, the default port for HTTP traffic.
 EXPOSE 80
 
-# Avvia nginx in foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Start Nginx in the foreground.
+# Before starting Nginx, envsubst reads the configuration template file
+# and replaces the environment variables (e.g. $ORCHESTRATOR_HOST) with their actual values.
+# The result is redirected to /etc/nginx/conf.d/default.conf, which Nginx will load.
+CMD ["/bin/sh", "-c", "envsubst < /etc/nginx/conf.d/nginx.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

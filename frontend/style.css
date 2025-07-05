@@ -1,80 +1,139 @@
+/* Import Inter font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
 body {
-    background: #f0f2f5;
-}
-.card {
-    border-radius: 0.5rem;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-}
-#orch-feedback, #choreo-feedback {
-    font-family: monospace;
-    white-space: pre-wrap;
+    font-family: 'Inter', sans-serif; /* Apply the font to the entire body */
+    /* Background and text colours are managed by Tailwind in the body tag of index.html */
 }
 
-h1 {
-    text-align: center;
+/* Base for dark mode */
+html.dark {
+    /* Tailwind handles most colours here */
 }
 
-.tabs {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 1rem;
-}
-
-.tabs button {
-    flex: 1;
-    padding: 0.5rem;
-    border: 1px solid #aaa;
-    background: #eee;
-    cursor: pointer;
-}
-
-.tabs button.active {
-    background: #fff;
-    border-bottom: none;
-    font-weight: bold;
-}
-
-.panel {
-    border: 1px solid #aaa;
+/* Style for feedback boxes */
+.feedback-box {
+    background: #e2e8f0; /* light gray */
     padding: 1rem;
+    border-radius: 0.75rem; /* rounded-lg */
+    font-family: 'Inter', monospace;
+    font-size: 0.9rem;
+    white-space: pre-wrap; /* Retains formatting and wrapping */
+    word-wrap: break-word; /* Breaks long words if necessary */
+    color: #2d3748; /* dark gray text */
+    max-height: 200px; /* Limit height */
+    overflow-y: auto; /* Adds scrollbar if necessary */
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); /* Thin inner shadow */
+    transition: background-color 0.3s ease;
+}
+
+html.dark .feedback-box {
+    background: #1a202c; /* dark gray */
+    color: #e2e8f0; /* light gray text */
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* Style for main panels */
+.panel-content {
     background: #fff;
+    padding: 2.5rem; /* Increased padding for more space */
+    border-radius: 1.5rem; /* More rounded edges */
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 5px 10px rgba(0, 0, 0, 0.05); /* More pronounced shadow */
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
 }
 
-.hidden {
-    display: none;
+html.dark .panel-content {
+    background: #2d3748; /* dark blue-gray */
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3), 0 5px 10px rgba(0, 0, 0, 0.15);
 }
 
-form label {
-    display: block;
-    margin: 0.5rem 0;
+/* Style for tab buttons */
+.tab-button {
+    flex: 1;
+    padding: 1rem 0; /* Imbottitura verticale */
+    border: none; /* Remove predefined borders */
+    background: none; /* Remove default background */
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 600; /* More often */
+    color: #6b7280; /* Medium grey */
+    border-bottom: 3px solid transparent; /* Thin, transparent bottom edge */
+    transition: color 0.3s ease, border-color 0.3s ease, background-color 0.3s ease;
+    border-top-left-radius: 0.75rem; /* Round only the top corners */
+    border-top-right-radius: 0.75rem;
+    margin: 0 0.25rem; /* Space between buttons */
 }
 
-form input {
-    width: 100%;
-    padding: 0.3rem;
-    margin-left: 0.5rem;
+.tab-button:hover {
+    color: #8B5CF6; /* Primary purple on hover */
+    background-color: rgba(139, 92, 246, 0.1); /* Light purple shade */
 }
 
-form button {
-    margin-top: 1rem;
-    padding: 0.5rem 1rem;
+.tab-button.active {
+    color: #8B5CF6; /* Primary purple */
+    border-bottom-color: #8B5CF6; /* Highlighted bottom edge */
+    background-color: #fff; /* White background for the active tab */
+    box-shadow: 0 -5px 10px rgba(0, 0, 0, 0.05); /* Light shade above */
+    z-index: 1; /* Make sure it is above the others */
+    position: relative; /* For z-index */
 }
 
-pre {
-    margin-top: 1rem;
-    background: #f7f7f7;
-    padding: 0.5rem;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+html.dark .tab-button.active {
+    color: #8B5CF6; /* Primary purple in dark mode */
+    border-bottom-color: #8B5CF6;
+    background-color: #2d3748; /* dark blue-grey for the active tab */
 }
 
+html.dark .tab-button:hover {
+    color: #8B5CF6;
+    background-color: rgba(139, 92, 246, 0.2);
+}
+
+/* Style for input fields and buttons (Tailwind already handles a lot, but these are additional) */
+input[type="text"],
+input[type="number"] {
+    background-color: #f9fafb; /* Slightly darker background for input */
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.05); /* Inner shade */
+}
+
+html.dark input[type="text"],
+html.dark input[type="number"] {
+    background-color: #242c38; /* Dark background for input in dark mode */
+}
+
+/* Style for Submit buttons (Tailwind already handles a lot, but strengthens the shadow) */
+button[type="submit"] {
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1); /* More defined shadow */
+}
+
+button[type="submit"]:hover {
+    box-shadow: 0 6px 15px rgba(0,0,0,0.2); /* Larger shadow at hover */
+}
+
+/* Improved scrollbar style */
 ::-webkit-scrollbar {
-    width: 8px;
+    width: 10px; /* Larger width */
 }
 ::-webkit-scrollbar-track {
-    background: transparent;
+    background: #f1f1f1; /* Clearer track background */
+    border-radius: 5px;
 }
 ::-webkit-scrollbar-thumb {
-    background-color: rgba(0,0,0,0.2);
-    border-radius: 4px;
+    background-color: #888; /* Thumb colour */
+    border-radius: 5px;
+    border: 2px solid #f1f1f1; /* Edge to make it thinner */
+}
+::-webkit-scrollbar-thumb:hover {
+    background-color: #555; /* Thumb colour on hover */
+}
+
+html.dark ::-webkit-scrollbar-track {
+    background: #2d3748; /* Background track in dark mode */
+}
+html.dark ::-webkit-scrollbar-thumb {
+    background-color: #6b7280; /* Thumb colour in dark mode */
+    border: 2px solid #2d3748;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+    background-color: #9ca3af;
 }
