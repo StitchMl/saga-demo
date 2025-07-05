@@ -1,0 +1,47 @@
+services:
+  event-bus:
+    build: ./event-bus
+    ports: ["8070:8070"]
+
+  orchestrator:
+    build: ./orchestrator
+    ports: ["8080:8080"]
+
+  order-service:
+    build: ./order-service
+    ports: ["8281:8081"]
+
+  order-service-choreo:
+    build: ./order-service-choreo
+    ports: ["8181:8081"]
+
+  payment-service:
+    build: ./payment-service
+    ports: ["8282:8082"]
+
+  payment-service-choreo:
+    build: ./payment-service-choreo
+    ports: ["8182:8082"]
+
+  shipping-service:
+    build: ./shipping-service
+    ports: ["8283:8083"]
+
+  shipping-service-choreo:
+    build: ./shipping-service-choreo
+    ports: ["8183:8083"]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports: ["5000:80"]
+    depends_on:
+      - event-bus
+      - orchestrator
+      - order-service
+      - order-service-choreo
+      - payment-service
+      - payment-service-choreo
+      - shipping-service
+      - shipping-service-choreo

@@ -1,0 +1,80 @@
+body {
+    background: #f0f2f5;
+}
+.card {
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+#orch-feedback, #choreo-feedback {
+    font-family: monospace;
+    white-space: pre-wrap;
+}
+
+h1 {
+    text-align: center;
+}
+
+.tabs {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1rem;
+}
+
+.tabs button {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #aaa;
+    background: #eee;
+    cursor: pointer;
+}
+
+.tabs button.active {
+    background: #fff;
+    border-bottom: none;
+    font-weight: bold;
+}
+
+.panel {
+    border: 1px solid #aaa;
+    padding: 1rem;
+    background: #fff;
+}
+
+.hidden {
+    display: none;
+}
+
+form label {
+    display: block;
+    margin: 0.5rem 0;
+}
+
+form input {
+    width: 100%;
+    padding: 0.3rem;
+    margin-left: 0.5rem;
+}
+
+form button {
+    margin-top: 1rem;
+    padding: 0.5rem 1rem;
+}
+
+pre {
+    margin-top: 1rem;
+    background: #f7f7f7;
+    padding: 0.5rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background-color: rgba(0,0,0,0.2);
+    border-radius: 4px;
+}
