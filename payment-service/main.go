@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -93,6 +94,18 @@ func refundHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Payment refunded for OrderID: %s", orderID)
 }
 
+// healthCheckHandler responds with 200 OK for healthchecks.
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.WriteString(w, "OK"); err != nil {
+		log.Printf("Warning: Error writing health check response: %v", err)
+	}
+}
+
 func main() {
 	// Initializes the external payment simulator at start-up.
 	paymentSimulator = NewExternalPaymentSimulator()
@@ -105,6 +118,9 @@ func main() {
 	// Route for reimbursement (POST /pay/{orderID}/refund).
 	// Uses a path variable 'orderID'.
 	router.HandleFunc("/pay/{orderID}/refund", refundHandler).Methods("POST")
+
+	// Register the health check handler with the mux router
+	router.HandleFunc("/health", healthCheckHandler).Methods("GET")
 
 	log.Println("Payment Service listening on :8082")
 	log.Fatal(http.ListenAndServe(":8082", router)) // Use the router.

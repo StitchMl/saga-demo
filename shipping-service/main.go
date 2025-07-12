@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -80,6 +81,18 @@ func cancelShipHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Shipment cancelled for OrderID: %s", orderID)
 }
 
+// healthCheckHandler responds with 200 OK for healthchecks.
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.WriteString(w, "OK"); err != nil {
+		log.Printf("Warning: Error writing health check response: %v", err)
+	}
+}
+
 func main() {
 	// Initializes the external shipping simulator at start-up.
 	shippingSimulator = NewExternalShippingSimulator()
@@ -92,6 +105,9 @@ func main() {
 	// Route for shipment cancellation (POST /ship/{orderID}/cancel-shipping).
 	// Uses a path variable 'orderID'.
 	router.HandleFunc("/ship/{orderID}/cancel-shipping", cancelShipHandler).Methods("POST")
+
+	// Register the health check handler with the mux router
+	router.HandleFunc("/health", healthCheckHandler).Methods("GET")
 
 	log.Println("Shipping Service listening on :8083")
 	log.Fatal(http.ListenAndServe(":8083", router)) // Use the router.

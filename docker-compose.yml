@@ -1,7 +1,4 @@
 # This file defines and configures the Docker services for the SAGA app.
-
-version: '3.8' # Specifies the version of the Docker Compose format.
-
 services:
   # Event Bus Service (Choreography)
   event-bus:
@@ -9,12 +6,14 @@ services:
     ports:
       - "8070:8070" # Map internal port 8070 to external port 8070.
     restart: always # Always restart the container if it stops.
-    healthcheck: # Healthcheck to verify that the service is active and responsive.
-      test: ["CMD", "curl", "-f", "http://localhost:8070/publish"] # Test the /publish an endpoint.
-      interval: 10s # Check every 10 seconds.
-      timeout: 5s # Timeout for each control.
-      retries: 5 # Amount attempts before considering the service unsound.
-      start_period: 20s # Initial period for starting the container before starting the controls.
+    environment:
+      EVENT_BUS_PORT: "8070" # Expose the door as an internal environment variable
+    healthcheck: # Healthcheck to verify that the service is active and responding.
+      test: ["CMD", "curl", "-f", "http://localhost:8070/health"] # Test the /publish an endpoint.
+      interval: 5s # Check every 10 seconds.
+      timeout: 3s # Timeout for each control.
+      retries: 10 # Amount attempts before considering the service unsound.
+      start_period: 30s # Initial period for starting the container before starting the controls.
 
   # SAGA Orchestrator Service
   orchestrator:
@@ -22,15 +21,21 @@ services:
     ports:
       - "8080:8080" # Map internal port 8080 to external port 8080.
     restart: always
-    depends_on: # It ensures that dependent services are started earlier.
+    environment: # Environment variables for the orchestrator service
+      ORCHESTRATOR_PORT: "8080"
+      ORDER_SERVICE_URL: "http://order-service:8081/orders"
+      PAYMENT_SERVICE_URL: "http://payment-service:8082/pay"
+      SHIPPING_SERVICE_URL: "http://shipping-service:8083/ship"
+      DEFAULT_CUSTOMER_ADDRESS: "Via Roma 1, Milano" # Default address for simulation
+    depends_on: # Ensures that dependent services are started earlier.
       order-service:
-        condition: service_healthy # It depends on healthy order-service.
+        condition: service_healthy # Depends on healthy order-service.
       payment-service:
-        condition: service_healthy # It depends on healthy payment.
+        condition: service_healthy # Depends on healthy payment-service.
       shipping-service:
-        condition: service_healthy # It depends on healthy shipping-service.
+        condition: service_healthy # Depends on healthy shipping-service.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/saga"] # Test the endpoint /saga.
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"] # Test the endpoint /saga.
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,24 +47,29 @@ services:
     ports:
       - "8281:8081" # Map internal port 8081 to external port 8281.
     restart: always
+    environment:
+      ORDER_SERVICE_PORT: "8081"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/orders"] # Test the /orders endpoint.
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"] # Test the /orders endpoint.
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
 
-  # Order Service (SAGA Choreographed)
+  # Order Service (Choreographed SAGA)
   order-service-choreo:
     build: ./order-service-choreo
     ports:
       - "8181:8081" # Map internal port 8081 to external port 8181.
     restart: always
+    environment: # Environment variables for the orders-choreo service
+      ORDER_SERVICE_CHOREO_PORT: "8081"
+      EVENT_BUS_URL: "http://event-bus:8070"
     depends_on:
       event-bus:
         condition: service_healthy # Depends on a healthy event-bus for subscription.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/orders"] # Test the /orders endpoint.
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"] # Test the /orders endpoint.
       interval: 10s
       timeout: 5s
       retries: 5
@@ -71,12 +81,14 @@ services:
     ports:
       - "8282:8082" # Map internal port 8082 to external port 8282.
     restart: always
+    environment:
+      PAYMENT_SERVICE_PORT: "8082"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/pay"] # Test the /pay endpoint.
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"] # Test the /pay endpoint.
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
 
   # Payment Service (SAGA Choreographed)
   payment-service-choreo:
@@ -84,28 +96,34 @@ services:
     ports:
       - "8182:8082" # Map internal port 8082 to external port 8182.
     restart: always
+    environment: # Environment variables for the payments-choreo service
+      PAYMENT_SERVICE_CHOREO_PORT: "8082"
+      EVENT_BUS_URL: "http://event-bus:8070"
+      FAIL_PAYMENT_THRESHOLD: "150.00" # Threshold for simulated payment failure
     depends_on:
       event-bus:
-        condition: service_healthy # Depends on a healthy event bus for subscription.
+        condition: service_healthy # Depends on a healthy event-bus for subscription.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/pay"] # Test the /pay endpoint.
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"] # Test the /pay endpoint.
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
-  # Shipping Service (Orchestrated SAGA)
+  # Shipping Service (SAGA Orchestrated)
   shipping-service:
     build: ./shipping-service
     ports:
       - "8283:8083" # Map internal port 8083 to external port 8283.
     restart: always
+    environment:
+      SHIPPING_SERVICE_PORT: "8083"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/ship"] # Test the /ship endpoint.
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"] # Test the /ship endpoint.
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
 
   # Shipping Service (SAGA Choreographed)
   shipping-service-choreo:
@@ -113,11 +131,15 @@ services:
     ports:
       - "8183:8083" # Map internal port 8083 to external port 8183.
     restart: always
+    environment: # Environment variables for the shipments-choreo service
+      SHIPPING_SERVICE_CHOREO_PORT: "8083"
+      EVENT_BUS_URL: "http://event-bus:8070"
+      FAIL_SHIPPING_ORDER_IDS: "CHOREO-FAIL-1, CHOREO-FAIL-2" # Comma-separated order IDs for simulated shipping failure
     depends_on:
       event-bus:
-        condition: service_healthy # It depends on a healthy event-bus for subscription.
+        condition: service_healthy # Depends on a healthy event-bus for subscription.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/ship"] # Test the /ship endpoint.
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"] # Test the /ship endpoint.
       interval: 10s
       timeout: 5s
       retries: 5
@@ -131,7 +153,7 @@ services:
     ports:
       - "5000:80" # Map internal port 80 (Nginx) to external port 5000.
     restart: always
-    environment: # Pass environment variables to Nginx for dynamic configuration of proxies.
+    environment: # Passes environment variables to Nginx for dynamic proxy configuration.
       ORCHESTRATOR_HOST: orchestrator
       ORDER_SERVICE_CHOREO_HOST: order-service-choreo
       PAYMENT_SERVICE_CHOREO_HOST: payment-service-choreo

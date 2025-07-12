@@ -3,10 +3,11 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o order-service-choreo .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix netgo -o order-service-choreo .
 
 FROM alpine:3.22.0
 WORKDIR /app
+RUN apk add --no-cache curl
 COPY --from=builder /app/order-service-choreo .
 EXPOSE 8081
 CMD ["./order-service-choreo"]

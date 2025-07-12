@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -75,6 +76,18 @@ func cancelOrder(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// healthCheckHandler responds with 200 OK for healthchecks.
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.WriteString(w, "OK"); err != nil {
+		log.Printf("Warning: Error writing health check response: %v", err)
+	}
+}
+
 func main() {
 	router := mux.NewRouter()
 
@@ -84,6 +97,9 @@ func main() {
 	// Route for the cancellation of orders (POST /orders/{id}/cancel)
 	// Uses a path variable 'id' to remove the UUID.
 	router.HandleFunc(ordersPath+"/{id}/cancel", cancelOrder).Methods("POST")
+
+	// Register the health check handler with the mux router
+	router.HandleFunc("/health", healthCheckHandler).Methods("GET")
 
 	log.Println("Order Service listening on :8081")
 	log.Fatal(http.ListenAndServe(":8081", router)) // Use the router
