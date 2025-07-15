@@ -1,0 +1,6 @@
+{
+  "order_service_url": "http://order-service:8081",
+  "inventory_service_url": "http://inventory-service:8082",
+  "payment_service_url": "http://payment-service:8083",
+  "server_port": "8080"
+}

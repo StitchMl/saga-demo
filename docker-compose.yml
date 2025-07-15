@@ -1,177 +1,180 @@
-# This file defines and configures the Docker services for the SAGA app.
 services:
-  # Event Bus Service (Choreography)
-  event-bus:
-    build: ./event-bus # Builds the image from the event-bus directory.
+  # RabbitMQ for Event-Bus communication
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    hostname: rabbitmq
     ports:
-      - "8070:8070" # Map internal port 8070 to external port 8070.
-    restart: always # Always restart the container if it stops.
+      - "5672:5672" # AMQP port for communication between services
+      - "15672:15672" # Port for the management interface (RabbitMQ Management Plugin)
     environment:
-      EVENT_BUS_PORT: "8070" # Expose the door as an internal environment variable
-    healthcheck: # Healthcheck to verify that the service is active and responding.
-      test: ["CMD", "curl", "-f", "http://localhost:8070/health"] # Test the /publish an endpoint.
-      interval: 5s # Check every 10 seconds.
-      timeout: 3s # Timeout for each control.
-      retries: 10 # Amount attempts before considering the service unsound.
-      start_period: 30s # Initial period for starting the container before starting the controls.
-
-  # SAGA Orchestrator Service
-  orchestrator:
-    build: ./orchestrator # Builds the image from the orchestrator directory.
-    ports:
-      - "8080:8080" # Map internal port 8080 to external port 8080.
-    restart: always
-    environment: # Environment variables for the orchestrator service
-      ORCHESTRATOR_PORT: "8080"
-      ORDER_SERVICE_URL: "http://order-service:8081/orders"
-      PAYMENT_SERVICE_URL: "http://payment-service:8082/pay"
-      SHIPPING_SERVICE_URL: "http://shipping-service:8083/ship"
-      DEFAULT_CUSTOMER_ADDRESS: "Via Roma 1, Milano" # Default address for simulation
-    depends_on: # Ensures that dependent services are started earlier.
-      order-service:
-        condition: service_healthy # Depends on healthy order-service.
-      payment-service:
-        condition: service_healthy # Depends on healthy payment-service.
-      shipping-service:
-        condition: service_healthy # Depends on healthy shipping-service.
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"] # Test the endpoint /saga.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 20s
+    networks:
+      - saga-network
 
-  # Order Service (SAGA Orchestrated)
-  order-service:
-    build: ./order-service
-    ports:
-      - "8281:8081" # Map internal port 8081 to external port 8281.
-    restart: always
-    environment:
-      ORDER_SERVICE_PORT: "8081"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"] # Test the /orders endpoint.
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
-
-  # Order Service (Choreographed SAGA)
-  order-service-choreo:
-    build: ./order-service-choreo
-    ports:
-      - "8181:8081" # Map internal port 8081 to external port 8181.
-    restart: always
-    environment: # Environment variables for the orders-choreo service
-      ORDER_SERVICE_CHOREO_PORT: "8081"
-      EVENT_BUS_URL: "http://event-bus:8070"
-    depends_on:
-      event-bus:
-        condition: service_healthy # Depends on a healthy event-bus for subscription.
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"] # Test the /orders endpoint.
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # Payment Service (SAGA Orchestrated)
-  payment-service:
-    build: ./payment-service
-    ports:
-      - "8282:8082" # Map internal port 8082 to external port 8282.
-    restart: always
-    environment:
-      PAYMENT_SERVICE_PORT: "8082"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"] # Test the /pay endpoint.
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
-
-  # Payment Service (SAGA Choreographed)
-  payment-service-choreo:
-    build: ./payment-service-choreo
-    ports:
-      - "8182:8082" # Map internal port 8082 to external port 8182.
-    restart: always
-    environment: # Environment variables for the payments-choreo service
-      PAYMENT_SERVICE_CHOREO_PORT: "8082"
-      EVENT_BUS_URL: "http://event-bus:8070"
-      FAIL_PAYMENT_THRESHOLD: "150.00" # Threshold for simulated payment failure
-    depends_on:
-      event-bus:
-        condition: service_healthy # Depends on a healthy event-bus for subscription.
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"] # Test the /pay endpoint.
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # Shipping Service (SAGA Orchestrated)
-  shipping-service:
-    build: ./shipping-service
-    ports:
-      - "8283:8083" # Map internal port 8083 to external port 8283.
-    restart: always
-    environment:
-      SHIPPING_SERVICE_PORT: "8083"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/health"] # Test the /ship endpoint.
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
-
-  # Shipping Service (SAGA Choreographed)
-  shipping-service-choreo:
-    build: ./shipping-service-choreo
-    ports:
-      - "8183:8083" # Map internal port 8083 to external port 8183.
-    restart: always
-    environment: # Environment variables for the shipments-choreo service
-      SHIPPING_SERVICE_CHOREO_PORT: "8083"
-      EVENT_BUS_URL: "http://event-bus:8070"
-      FAIL_SHIPPING_ORDER_IDS: "CHOREO-FAIL-1, CHOREO-FAIL-2" # Comma-separated order IDs for simulated shipping failure
-    depends_on:
-      event-bus:
-        condition: service_healthy # Depends on a healthy event-bus for subscription.
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/health"] # Test the /ship endpoint.
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # Frontend (Nginx)
-  frontend:
+  # ORCHESTRATOR SAGA SERVICES
+  orchestrator-order-service:
     build:
-      context: ./frontend # Construction context for the frontend Dockerfile.
-      dockerfile: Dockerfile # Specifies the Dockerfile to be used.
+      context: .
+      dockerfile: orchestrator_saga/services/order_service/Dockerfile
+    container_name: orchestrator_order_service
     ports:
-      - "5000:80" # Map internal port 80 (Nginx) to external port 5000.
-    restart: always
-    environment: # Passes environment variables to Nginx for dynamic proxy configuration.
-      ORCHESTRATOR_HOST: orchestrator
-      ORDER_SERVICE_CHOREO_HOST: order-service-choreo
-      PAYMENT_SERVICE_CHOREO_HOST: payment-service-choreo
-      SHIPPING_SERVICE_CHOREO_HOST: shipping-service-choreo
-    depends_on: # Ensures that all backend services are started and healthy before the frontend.
-      event-bus:
+      - "8081:8081"
+    environment:
+      - ORDER_SERVICE_PORT=8081
+    networks:
+      - saga-network
+
+  orchestrator-inventory-service:
+    build:
+      context: .
+      dockerfile: orchestrator_saga/services/inventory_service/Dockerfile
+    container_name: orchestrator_inventory_service
+    ports:
+      - "8082:8082"
+    environment:
+      - INVENTORY_SERVICE_PORT=8082
+    networks:
+      - saga-network
+
+  orchestrator-payment-service:
+    build:
+      context: .
+      dockerfile: orchestrator_saga/services/payment_service/Dockerfile
+    ports:
+      - "8083:8083"
+    container_name: orchestrator_payment_service
+    networks:
+      - saga-network
+
+  # MAIN ORCHESTRATOR SERVICE
+  orchestrator:
+    build:
+      context: .
+      dockerfile: orchestrator_saga/Dockerfile
+    container_name: orchestrator_main # This is the container name
+    ports:
+      - "8080:8080" # CORRECTED: Host port 8080 maps to container port 8080
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      ServerPort: 8080
+      OrderServiceURL: http://orchestrator-order-service:8081
+      InventoryServiceURL: http://orchestrator-inventory-service:8082
+      PaymentServiceURL: http://orchestrator-payment-service:8083
+    depends_on:
+      rabbitmq:
         condition: service_healthy
-      orchestrator:
+      orchestrator-order-service:
+        condition: service_started
+      orchestrator-inventory-service:
+        condition: service_started
+      orchestrator-payment-service:
+        condition: service_started
+    networks:
+      - saga-network
+
+  # CHOREOGRAPHER SAGA SERVICES
+  choreographer-order-service:
+    build:
+      context: .
+      dockerfile: choreographer_saga/services/order_service/Dockerfile
+    container_name: choreographer_order_service
+    ports:
+      - "8085:8080" # This maps container 8080 to host 8082. OK.
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      INVENTORY_SERVICE_URL: http://choreographer-inventory-service:8081 # This URL points to the internal network name and port, which is fine.
+    depends_on:
+      rabbitmq:
         condition: service_healthy
-      order-service:
+      choreographer-inventory-service:
+        condition: service_started
+    networks:
+      - saga-network
+
+  choreographer-inventory-service:
+    build:
+      context: .
+      dockerfile: choreographer_saga/services/inventory_service/Dockerfile
+    ports:
+      - "8084:8081"
+    container_name: choreographer_inventory_service
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      rabbitmq:
         condition: service_healthy
-      order-service-choreo:
+    networks:
+      - saga-network
+
+  choreographer-payment-service:
+    build:
+      context: .
+      dockerfile: choreographer_saga/services/payment_service/Dockerfile
+    container_name: choreographer_payment_service
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      rabbitmq:
         condition: service_healthy
-      payment-service:
-        condition: service_healthy
-      payment-service-choreo:
-        condition: service_healthy
-      shipping-service:
-        condition: service_healthy
-      shipping-service-choreo:
-        condition: service_healthy
+    networks:
+      - saga-network
+
+  choreographer-auth-service:
+    build:
+      context: .
+      dockerfile: choreographer_saga/services/auth_service/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      AUTH_SERVICE_PORT: 8090
+    networks:
+      - saga-network
+
+  # Gateway API
+  api-gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ORDER_SERVICE_URL: http://choreographer-order-service:8080/create_order # This URL points to the internal network name and port, which is fine.
+      AUTH_SERVICE_URL: http://choreographer-auth-service:8090
+      GATEWAY_PORT: 8000
+      CHOREOGRAPHER_ORDER_SERVICE_URL: http://choreographer-order-service:8080/create_order # Order Service URL of choreography
+      ORCHESTRATOR_MAIN_SERVICE_URL: http://orchestrator:8080/create_order # URL of the main Orchestrator service
+    depends_on:
+      - choreographer-order-service
+      - choreographer-auth-service
+      - orchestrator
+    networks:
+      - saga-network
+  frontend:
+    image: node:20-alpine # Lightweight Node.js image for development
+    container_name: saga-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app # Mount the host's frontend folder in the container
+    ports:
+      - "8088:5173" # Default port of Screw
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0" # Install dependencies and start Vite
+    depends_on:
+      api-gateway:
+        condition: service_started # Depends on the gateway to make requests
+    networks:
+      - saga-network
+
+networks:
+  saga-network:
+    driver: bridge
+    enable_ipv6: false
+
+volumes:
+  rabbitmq_data:
+  rabbitmq_log:

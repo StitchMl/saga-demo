@@ -1,0 +1,51 @@
+# .gitignore
+
+# Binaries for programs
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*_test
+
+# Go binaries
+go.mod
+go.sum
+*.test
+*.prof
+
+# Project-specific binaries and artifacts
+bin/
+out/
+build/
+dist/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE-specific files
+.idea/
+.vscode/
+*.iml
+
+# Dependency directories
+vendor/
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.*
+
+# Vagrant files
+.vagrant/
+
+# Docker build artifacts
+*.dockerignore
+*.tar
+*.tar.gz
