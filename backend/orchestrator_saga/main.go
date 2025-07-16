@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/StitchMl/saga-demo/backend/common/data_store"
-	"github.com/StitchMl/saga-demo/backend/common/types"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/StitchMl/saga-demo/common/data_store"
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 // Config Configuration of Services

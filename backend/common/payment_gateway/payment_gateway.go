@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	inventorydb "github.com/StitchMl/saga-demo/backend/common/data_store"
-	"github.com/StitchMl/saga-demo/backend/common/types"
+	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 // simulatedGatewayDB simulates the internal database of a payment gateway.

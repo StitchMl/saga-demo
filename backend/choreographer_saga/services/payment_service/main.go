@@ -3,12 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/StitchMl/saga-demo/backend/choreographer_saga/shared"
-	"github.com/StitchMl/saga-demo/backend/common/payment_gateway"
-	"github.com/StitchMl/saga-demo/backend/common/types"
 	"log"
 	"os"
 	"sync"
+
+	"github.com/StitchMl/saga-demo/choreographer_saga/shared"
+	"github.com/StitchMl/saga-demo/common/payment_gateway"
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 const payloadErrorLogFmt = "Payment Service: Payload error: %v"

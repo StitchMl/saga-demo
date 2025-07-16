@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/StitchMl/saga-demo/backend/common/types"
 	"log"
 	"time"
 
+	"github.com/StitchMl/saga-demo/common/types"
 	"github.com/rabbitmq/amqp091-go"
 )
 

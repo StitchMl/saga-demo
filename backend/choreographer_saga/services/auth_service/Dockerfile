@@ -1,12 +1,11 @@
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
-COPY . .
+COPY backend/go.mod backend/go.sum ./
 RUN apk add --no-cache git
-
-WORKDIR /app
 RUN go mod tidy
 RUN go mod download
+COPY backend /app/backend
 
 WORKDIR /app/backend/choreographer_saga/services/auth_service
 RUN go build -o /usr/local/bin/auth-service .

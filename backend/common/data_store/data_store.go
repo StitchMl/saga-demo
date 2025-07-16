@@ -1,9 +1,10 @@
 package inventorydb
 
 import (
-	"github.com/StitchMl/saga-demo/backend/common/types"
 	"log"
 	"sync"
+
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 // DB contains all the in-memory databases for the various domains

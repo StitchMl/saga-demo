@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StitchMl/saga-demo/backend/choreographer_saga/shared"
-	"github.com/StitchMl/saga-demo/backend/common/types"
+	"github.com/StitchMl/saga-demo/choreographer_saga/shared"
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 // In-memory database for orders

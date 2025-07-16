@@ -18,7 +18,9 @@ services:
 
   # --- ORCHESTRATOR SAGA SERVICES ---
   orchestrator-order-service:
-    build: backend/orchestrator_saga/services/order_service
+    build:
+      context: .
+      dockerfile: backend/orchestrator_saga/services/order_service/Dockerfile
     container_name: orchestrator_order_service
     ports:
       - "8081:8081"
@@ -28,7 +30,9 @@ services:
       - saga-network
 
   orchestrator-inventory-service:
-    build: backend/orchestrator_saga/services/inventory_service
+    build:
+      context: .
+      dockerfile: backend/orchestrator_saga/services/inventory_service/Dockerfile
     container_name: orchestrator_inventory_service
     ports:
       - "8082:8082"
@@ -38,7 +42,9 @@ services:
       - saga-network
 
   orchestrator-payment-service:
-    build: backend/orchestrator_saga/services/payment_service
+    build:
+      context: .
+      dockerfile: backend/orchestrator_saga/services/payment_service/Dockerfile
     container_name: orchestrator_payment_service
     ports:
       - "8083:8083"
@@ -74,7 +80,9 @@ services:
 
   # --- CHOREOGRAPHER SAGA SERVICES ---
   choreographer-order-service:
-    build: backend/choreographer_saga/services/order_service
+    build:
+      context: .
+      dockerfile: backend/choreographer_saga/services/order_service/Dockerfile
     container_name: choreographer_order_service
     ports:
       - "8085:8080"
@@ -91,7 +99,9 @@ services:
       - saga-network
 
   choreographer-inventory-service:
-    build: backend/choreographer_saga/services/inventory_service
+    build:
+      context: .
+      dockerfile: backend/choreographer_saga/services/inventory_service/Dockerfile
     ports:
       - "8084:8081"
     container_name: choreographer_inventory_service
@@ -105,7 +115,9 @@ services:
       - saga-network
 
   choreographer-payment-service:
-    build: backend/choreographer_saga/services/payment_service
+    build:
+      context: .
+      dockerfile: backend/choreographer_saga/services/payment_service/Dockerfile
     container_name: choreographer_payment_service
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
@@ -116,7 +128,9 @@ services:
       - saga-network
 
   choreographer-auth-service:
-    build: backend/choreographer_saga/services/auth_service
+    build:
+      context: .
+      dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile
     ports:
       - "8090:8090"
     environment:
@@ -126,7 +140,9 @@ services:
 
   # --- Gateway API ---
   api-gateway:
-    build: backend/gateway
+    build:
+      context: .
+      dockerfile: backend/gateway/Dockerfile
     ports:
       - "8000:8000"
     environment:

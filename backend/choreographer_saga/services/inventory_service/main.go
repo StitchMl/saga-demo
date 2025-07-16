@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/StitchMl/saga-demo/backend/choreographer_saga/shared"
-	inventorydb "github.com/StitchMl/saga-demo/backend/common/data_store"
-	"github.com/StitchMl/saga-demo/backend/common/types"
+	"github.com/StitchMl/saga-demo/choreographer_saga/shared"
+	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 var eventBus *shared.EventBus

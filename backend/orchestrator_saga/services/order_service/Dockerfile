@@ -2,12 +2,11 @@
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
-COPY . .
+COPY backend/go.mod backend/go.sum ./
 RUN apk add --no-cache git
-
-WORKDIR /app
 RUN go mod tidy
 RUN go mod download
+COPY backend /app/backend
 
 WORKDIR /app/backend/orchestrator_saga/services/order_service
 RUN CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/order-service .

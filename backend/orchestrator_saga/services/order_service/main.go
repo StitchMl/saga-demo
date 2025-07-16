@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	inventorydb "github.com/StitchMl/saga-demo/backend/common/data_store"
-	"github.com/StitchMl/saga-demo/backend/common/types"
+	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
+	"github.com/StitchMl/saga-demo/common/types"
 )
 
 func main() {

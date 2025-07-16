@@ -2,11 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/StitchMl/saga-demo/backend/common/payment_gateway"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+
+	"github.com/StitchMl/saga-demo/common/payment_gateway"
 )
 
 const (

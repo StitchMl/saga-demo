@@ -10,8 +10,8 @@
 *_test
 
 # Go binaries
-go.mod
-go.sum
+backend/go.mod
+backend/go.sum
 *.test
 *.prof
 

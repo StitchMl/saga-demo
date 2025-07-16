@@ -2,14 +2,14 @@
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
-COPY . .
+COPY backend/go.mod backend/go.sum ./
 RUN apk add --no-cache git
-
 RUN go mod tidy
 RUN go mod download
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o /api-gateway ./gateway/main.go
-
+COPY backend/gateway /app/gateway
+COPY backend/common /app/common
+RUN CGO_ENABLED=0 GOOS=linux go build -o /api-gateway /app/gateway/main.go
 # --- SECOND STAGE: Light final image ---
 FROM alpine:3.19
 

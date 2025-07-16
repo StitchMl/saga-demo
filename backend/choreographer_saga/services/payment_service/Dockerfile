@@ -2,12 +2,11 @@
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
-COPY . .
+COPY backend/go.mod backend/go.sum ./
 RUN apk add --no-cache git
-
-WORKDIR /app
 RUN go mod tidy
 RUN go mod download
+COPY backend /app/backend
 
 WORKDIR /app/backend/choreographer_saga/services/payment_service
 RUN CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/payment-service .
