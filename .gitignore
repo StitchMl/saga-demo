@@ -39,7 +39,7 @@ vendor/
 logs/
 
 # Environment variables
-.env
+frontend/.env
 .env.*
 
 # Vagrant files

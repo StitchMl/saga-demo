@@ -8,12 +8,12 @@ RUN go mod tidy
 RUN go mod download
 COPY backend /app/backend
 
-WORKDIR /app/backend/choreographer_saga/services/inventory_service
-RUN CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/inventory-service .
+WORKDIR /app/backend/orchestrator_saga/services/auth_service
+RUN CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/auth-service .
 
 # --- SECOND STAGE: Light final image ---
 FROM alpine:3.19
 
 WORKDIR /root/
-COPY --from=builder /usr/local/bin/inventory-service .
-CMD ["./inventory-service"]
+COPY --from=builder /usr/local/bin/auth-service .
+CMD ["./auth-service"]

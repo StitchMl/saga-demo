@@ -37,23 +37,22 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	inventorydb.DB.Users.Lock()
 	defer inventorydb.DB.Users.Unlock()
-	found := false
+	var authenticated bool
 	for _, user := range inventorydb.DB.Users.Data {
 		if user.Username == u.Username {
 			if err := events.CheckPassword(user.PasswordHash, u.PasswordHash); err == nil {
-				found = true
+				authenticated = true
 				break
 			}
 		}
 	}
-	if !found {
+	if !authenticated {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// validateHandler simulates credential/token validation logic.
 func validateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -64,17 +63,16 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	resp := events.AuthResponse{CustomerID: req.CustomerID, Valid: false}
+	status := http.StatusOK
 	inventorydb.DB.Users.Lock()
-	valid := false
 	for _, user := range inventorydb.DB.Users.Data {
-		if user.ID == req.CustomerID {
-			valid = true
+		if user.Username == req.CustomerID {
+			resp.Valid = true
 			break
 		}
 	}
 	inventorydb.DB.Users.Unlock()
-	resp := events.AuthResponse{CustomerID: req.CustomerID, Valid: valid}
-	status := http.StatusOK
 	if req.CustomerID == "" {
 		resp.Valid = false
 		resp.Message = "Customer ID cannot be empty."
@@ -95,13 +93,13 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	http.HandleFunc("/register", registerHandler)
+	http.HandleFunc("/login", loginHandler)
+	http.HandleFunc("/validate", validateHandler)
 	port := os.Getenv("AUTH_SERVICE_PORT")
 	if port == "" {
 		log.Fatal("AUTH_SERVICE_PORT non è settata")
 	}
-	http.HandleFunc("/register", registerHandler)
-	http.HandleFunc("/login", loginHandler)
-	http.HandleFunc("/validate", validateHandler)
-	log.Printf("Auth Service (Choreo) started on port %s", port)
+	log.Printf("Auth Service (Orchestrator) started on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

@@ -21,6 +21,10 @@ var DB = struct {
 		sync.RWMutex
 		Data map[string]float64
 	}
+	Users struct {
+		sync.RWMutex
+		Data []events.User
+	}
 }{
 	Orders: struct {
 		sync.RWMutex
@@ -34,6 +38,10 @@ var DB = struct {
 		sync.RWMutex
 		Data map[string]float64
 	}{Data: make(map[string]float64)},
+	Users: struct {
+		sync.RWMutex
+		Data []events.User
+	}{Data: make([]events.User, 0)},
 }
 
 // InitDB initializes the inventory database and price database.
@@ -42,9 +50,11 @@ func InitDB() {
 	DB.Orders.Lock()
 	DB.Inventory.Lock()
 	DB.Prices.Lock()
+	DB.Users.Lock()
 	defer DB.Orders.Unlock()
 	defer DB.Inventory.Unlock()
 	defer DB.Prices.Unlock()
+	defer DB.Users.Unlock()
 
 	// Inizializzazione degli ordini (vuoto all'inizio)
 	DB.Orders.Data = make(map[string]events.Order)
@@ -64,6 +74,24 @@ func InitDB() {
 	DB.Prices.Data["product-C"] = 5.75
 	DB.Prices.Data["product-D"] = 150.00
 	DB.Prices.Data["product-E"] = 30.20
+
+	// Initialization of users
+	DB.Users.Data = []events.User{
+		{
+			ID:           "user-1",
+			Name:         "Mario Rossi",
+			Email:        "mario.rossi@example.com",
+			Username:     "mario.rossi",
+			PasswordHash: func() string { h, _ := events.HashPassword("password1"); return h }(),
+		},
+		{
+			ID:           "user-2",
+			Name:         "Luca Bianchi",
+			Email:        "luca.bianchi@example.com",
+			Username:     "luca.bianchi",
+			PasswordHash: func() string { h, _ := events.HashPassword("password2"); return h }(),
+		},
+	}
 
 	log.Println("[DataStore] Global data store initialized.")
 	log.Println("[DataStore] Initial Inventory:", DB.Inventory.Data)

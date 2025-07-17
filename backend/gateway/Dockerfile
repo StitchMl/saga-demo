@@ -1,10 +1,11 @@
 # FIRST STAGE: Builder
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23.0-alpine AS builder
 
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
 RUN apk add --no-cache git
 RUN go mod tidy
+RUN go get golang.org/x/crypto/bcrypt
 RUN go mod download
 
 COPY backend/gateway /app/gateway

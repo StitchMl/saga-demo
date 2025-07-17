@@ -53,6 +53,17 @@ services:
     networks:
       - saga-network
 
+  orchestrator-auth-service:
+    build:
+      context: .
+      dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile
+    ports:
+      - "8084:8084"
+    environment:
+      AUTH_SERVICE_PORT: 8084
+    networks:
+      - saga-network
+
   # MAIN ORCHESTRATOR SERVICE
   orchestrator:
     build:
@@ -85,9 +96,9 @@ services:
       dockerfile: backend/choreographer_saga/services/order_service/Dockerfile
     container_name: choreographer_order_service
     ports:
-      - "8085:8080"
+      - "8085:8081"
     environment:
-      ORDER_SERVICE_PORT: 8080
+      ORDER_SERVICE_PORT: 8081
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       INVENTORY_SERVICE_URL: http://choreographer-inventory-service:8081
     depends_on:
@@ -103,10 +114,10 @@ services:
       context: .
       dockerfile: backend/choreographer_saga/services/inventory_service/Dockerfile
     ports:
-      - "8084:8081"
+      - "8086:8082"
     container_name: choreographer_inventory_service
     environment:
-      INVENTORY_SERVICE_PORT: 8081
+      INVENTORY_SERVICE_PORT: 8082
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       rabbitmq:
@@ -118,8 +129,11 @@ services:
     build:
       context: .
       dockerfile: backend/choreographer_saga/services/payment_service/Dockerfile
+    ports:
+      - "8087:8083"
     container_name: choreographer_payment_service
     environment:
+      PAYMENT_SERVICE_PORT: 8083
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       rabbitmq:
@@ -132,7 +146,7 @@ services:
       context: .
       dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile
     ports:
-      - "8090:8090"
+      - "8088:8084"
     environment:
       AUTH_SERVICE_PORT: 8090
     networks:
@@ -166,10 +180,11 @@ services:
     volumes:
       - ./frontend:/app
     ports:
-      - "8088:5173"
+      - "8090:3000"
     environment:
-      FRONTEND_PORT: 5173
-    command: npm install && npm run dev
+      FRONTEND_PORT: 3000
+      HOST: 0.0.0.0
+    command: sh -c "npm install && npm start"
     depends_on:
       - api-gateway
     networks:
