@@ -7,32 +7,59 @@ import (
 	"os"
 	"time"
 
+	"github.com/StitchMl/saga-demo/choreographer_saga/shared"
 	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
 	events "github.com/StitchMl/saga-demo/common/types"
 )
 
-func registerHandler(w http.ResponseWriter, r *http.Request) {
+var eventBus *shared.EventBus
+
+// Handler for signing UserRegisteredEvent
+func handleUserRegisteredEvent(data interface{}) {
+	event, ok := data.(events.GenericEvent)
+	if !ok {
+		log.Printf("Invalid event type for UserRegisteredEvent")
+		return
+	}
+	userMap, ok := event.Payload.(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid payload for UserRegisteredEvent")
+		return
+	}
 	var u events.User
-	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+	b, _ := json.Marshal(userMap)
+	if err := json.Unmarshal(b, &u); err != nil {
+		log.Printf("User unmarshalling error: %v", err)
 		return
 	}
 	inventorydb.DB.Users.Lock()
 	defer inventorydb.DB.Users.Unlock()
 	for _, user := range inventorydb.DB.Users.Data {
 		if user.Username == u.Username {
-			http.Error(w, "User exists", http.StatusConflict)
+			log.Printf("User exists: %s", u.Username)
 			return
 		}
 	}
 	inventorydb.DB.Users.Data = append(inventorydb.DB.Users.Data, u)
-	w.WriteHeader(http.StatusCreated)
+	log.Printf("User registered: %s", u.Username)
 }
 
-func loginHandler(w http.ResponseWriter, r *http.Request) {
+// Handler for signing UserLoginEvent
+func handleUserLoginEvent(data interface{}) {
+	event, ok := data.(events.GenericEvent)
+	if !ok {
+		log.Printf("Invalid event type for UserLoginEvent")
+		return
+	}
+	userMap, ok := event.Payload.(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid payload for UserLoginEvent")
+		return
+	}
 	var u events.User
-	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+	b, _ := json.Marshal(userMap)
+	if err := json.Unmarshal(b, &u); err != nil {
+		log.Printf("User unmarshalling error: %v", err)
 		return
 	}
 	inventorydb.DB.Users.Lock()
@@ -47,21 +74,28 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !found {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		log.Printf("Login failed for user: %s", u.Username)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	log.Printf("User login: %s", u.Username)
 }
 
-// validateHandler simulates credential/token validation logic.
-func validateHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+// ValidateEvent subscription handler
+func handleValidateEvent(data interface{}) {
+	event, ok := data.(events.GenericEvent)
+	if !ok {
+		log.Printf("Invalid event type for ValidateEvent")
+		return
+	}
+	reqMap, ok := event.Payload.(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid payload for ValidateEvent")
 		return
 	}
 	var req events.AuthRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	b, _ := json.Marshal(reqMap)
+	if err := json.Unmarshal(b, &req); err != nil {
+		log.Printf("AuthRequest unmarshalling error: %v", err)
 		return
 	}
 	inventorydb.DB.Users.Lock()
@@ -89,9 +123,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		time.Sleep(50 * time.Millisecond)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(resp)
+	log.Printf("Validate event: %+v, status: %d", resp, status)
 }
 
 func main() {
@@ -99,9 +131,28 @@ func main() {
 	if port == "" {
 		log.Fatal("AUTH_SERVICE_PORT non è settata")
 	}
-	http.HandleFunc("/register", registerHandler)
-	http.HandleFunc("/login", loginHandler)
-	http.HandleFunc("/validate", validateHandler)
+
+	rabbitMQURL := os.Getenv("RABBITMQ_URL")
+	if rabbitMQURL == "" {
+		log.Fatal("RABBITMQ_URL non impostata")
+	}
+	var err error
+	eventBus, err = shared.NewEventBus(rabbitMQURL)
+	if err != nil {
+		log.Fatalf("Unable to create EventBus: %v", err)
+	}
+	defer eventBus.Close()
+
+	for event, handler := range map[events.EventType]func(interface{}){
+		events.UserRegisteredEvent: handleUserRegisteredEvent,
+		events.UserLoginEvent:      handleUserLoginEvent,
+		events.ValidateEvent:       handleValidateEvent,
+	} {
+		if err := eventBus.Subscribe(event, handler); err != nil {
+			log.Fatalf("Subscription error %s: %v", event, err)
+		}
+	}
+
 	log.Printf("Auth Service (Choreo) started on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

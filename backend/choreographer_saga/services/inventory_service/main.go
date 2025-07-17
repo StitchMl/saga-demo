@@ -24,7 +24,7 @@ func main() {
 
 	eventBus, err := shared.NewEventBus(rabbitMQURL)
 	if err != nil {
-		log.Fatalf("Impossibile creare EventBus: %v", err)
+		log.Fatalf("Unable to create EventBus: %v", err)
 	}
 	defer eventBus.Close()
 
@@ -33,7 +33,7 @@ func main() {
 		events.RevertInventoryEvent: handleRevertInventoryEvent,
 	} {
 		if err := eventBus.Subscribe(event, handler); err != nil {
-			log.Fatalf("Errore sottoscrizione %s: %v", event, err)
+			log.Fatalf("Subscription error %s: %v", event, err)
 		}
 	}
 
@@ -41,9 +41,9 @@ func main() {
 
 	port := os.Getenv("INVENTORY_SERVICE_PORT")
 	if port == "" {
-		log.Fatal("INVENTORY_SERVICE_PORT non impostata")
+		log.Fatal("INVENTORY_SERVICE_PORT not set")
 	}
-	log.Printf("Inventory Service avviato su porta %s", port)
+	log.Printf("Inventory Service started on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 

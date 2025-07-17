@@ -15,6 +15,9 @@ const (
 	OrderRejectedEvent              EventType = "OrderRejected"
 	RevertInventoryEvent            EventType = "RevertInventory"
 	RevertPaymentEvent              EventType = "RevertPayment"
+	UserRegisteredEvent             EventType = "UserRegistered"
+	UserLoginEvent                  EventType = "UserLogin"
+	ValidateEvent                   EventType = "ValidateEvent"
 )
 
 // EventPayload is an interface to all event payloads, making their nature explicit.
