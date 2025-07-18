@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StitchMl/saga-demo/common/data_store"
-	"github.com/StitchMl/saga-demo/common/types"
+	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
+	events "github.com/StitchMl/saga-demo/common/types"
 )
 
 // Config Configuration of Services
@@ -69,8 +69,7 @@ func loadConfigFromEnv() {
 	}
 	appConfig.ServerPort = os.Getenv("ServerPort")
 	if appConfig.ServerPort == "" {
-		appConfig.ServerPort = "8080" // Default port if not set
-		log.Printf("ServerPort environment variable not set, using default: %s", appConfig.ServerPort)
+		log.Fatal("ServerPort environment variable not set! Must be set to run the server.")
 	}
 
 	log.Printf("Configuration loaded: %+v", appConfig)

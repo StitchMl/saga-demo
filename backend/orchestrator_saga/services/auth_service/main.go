@@ -2,104 +2,136 @@ package main
 
 import (
 	"encoding/json"
+	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
+	events "github.com/StitchMl/saga-demo/common/types"
+	"github.com/google/uuid"
 	"log"
 	"net/http"
 	"os"
-	"time"
-
-	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
-	events "github.com/StitchMl/saga-demo/common/types"
 )
 
+const (
+	errorInvalidInput     = "invalid input"
+	errorMethodNotAllowed = "method not allowed"
+)
+
+// ---------------- REGISTER -----------------
 func registerHandler(w http.ResponseWriter, r *http.Request) {
-	var u events.User
-	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+	if r.Method != http.MethodPost {
+		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)
 		return
 	}
+	var u events.User
+	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+		http.Error(w, errorInvalidInput, http.StatusBadRequest)
+		return
+	}
+	hash, _ := events.HashPassword(u.PasswordHash)
+	u.PasswordHash = hash
+
+	if u.ID == "" {
+		u.ID = uuid.NewString()
+	}
+
 	inventorydb.DB.Users.Lock()
-	defer inventorydb.DB.Users.Unlock()
-	for _, user := range inventorydb.DB.Users.Data {
-		if user.Username == u.Username {
-			http.Error(w, "User exists", http.StatusConflict)
+	for _, usr := range inventorydb.DB.Users.Data {
+		if usr.Username == u.Username {
+			inventorydb.DB.Users.Unlock()
+			http.Error(w, "user exists", http.StatusConflict)
 			return
 		}
 	}
 	inventorydb.DB.Users.Data = append(inventorydb.DB.Users.Data, u)
+	inventorydb.DB.Users.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"customer_id": u.ID,
+	})
 }
 
+// ---------------- LOGIN --------------------
 func loginHandler(w http.ResponseWriter, r *http.Request) {
-	var u events.User
-	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
+	if r.Method != http.MethodPost {
+		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)
 		return
 	}
-	inventorydb.DB.Users.Lock()
-	defer inventorydb.DB.Users.Unlock()
-	var authenticated bool
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, errorInvalidInput, http.StatusBadRequest)
+		return
+	}
+
+	inventorydb.DB.Users.RLock()
+	defer inventorydb.DB.Users.RUnlock()
 	for _, user := range inventorydb.DB.Users.Data {
-		if user.Username == u.Username {
-			if err := events.CheckPassword(user.PasswordHash, u.PasswordHash); err == nil {
-				authenticated = true
-				break
-			}
+		if user.Username == req.Username &&
+			events.CheckPassword(user.PasswordHash, req.Password) == nil {
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"customer_id": user.ID,
+			})
+			return
 		}
 	}
-	if !authenticated {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
 
+// validateHandler risponde alla richiesta POST /validate
 func validateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)
 		return
 	}
+
 	var req events.AuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	resp := events.AuthResponse{CustomerID: req.CustomerID, Valid: false}
-	status := http.StatusOK
-	inventorydb.DB.Users.Lock()
+
+	inventorydb.DB.Users.RLock()
+	defer inventorydb.DB.Users.RUnlock()
+
+	valid := false
 	for _, user := range inventorydb.DB.Users.Data {
-		if user.Username == req.CustomerID {
-			resp.Valid = true
+		if user.ID == req.CustomerID {
+			valid = true
 			break
 		}
 	}
-	inventorydb.DB.Users.Unlock()
-	if req.CustomerID == "" {
-		resp.Valid = false
-		resp.Message = "Customer ID cannot be empty."
-		status = http.StatusBadRequest
-	} else if req.CustomerID == "unauthorized-user" {
-		resp.Valid = false
-		resp.Message = "User is explicitly unauthorized."
-		status = http.StatusUnauthorized
-	} else if !resp.Valid {
-		resp.Message = "User not found."
-		status = http.StatusUnauthorized
-	} else {
-		time.Sleep(50 * time.Millisecond)
-	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(resp)
+	if valid {
+		_ = json.NewEncoder(w).Encode(events.AuthResponse{
+			CustomerID: req.CustomerID,
+			Valid:      true,
+		})
+	} else {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(events.AuthResponse{
+			CustomerID: req.CustomerID,
+			Valid:      false,
+		})
+	}
 }
 
+func healthHandler(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+
 func main() {
+	port := os.Getenv("AUTH_SERVICE_PORT")
+	if port == "" {
+		log.Fatal("AUTH_SERVICE_PORT non impostata")
+	}
+
 	http.HandleFunc("/register", registerHandler)
 	http.HandleFunc("/login", loginHandler)
 	http.HandleFunc("/validate", validateHandler)
-	port := os.Getenv("AUTH_SERVICE_PORT")
-	if port == "" {
-		log.Fatal("AUTH_SERVICE_PORT non è settata")
-	}
-	log.Printf("Auth Service (Orchestrator) started on port %s", port)
+	http.HandleFunc("/health", healthHandler)
+
+	log.Printf("[Auth‑O] listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

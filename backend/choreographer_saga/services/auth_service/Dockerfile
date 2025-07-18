@@ -14,4 +14,3 @@ FROM alpine:3.19
 
 COPY --from=builder /usr/local/bin/auth-service /usr/local/bin/auth-service
 CMD ["auth-service"]
-EXPOSE 8090

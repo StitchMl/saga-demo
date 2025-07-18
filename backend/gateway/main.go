@@ -8,193 +8,214 @@ import (
 	"log"
 	"net/http"
 	"os"
-
-	"github.com/StitchMl/saga-demo/common/types"
+	"strings"
+	"time"
 )
 
-func main() {
-	requiredEnv := []string{
-		"CHOREOGRAPHER_ORDER_SERVICE_URL", "AUTH_SERVICE_URL",
-		"ORCHESTRATOR_MAIN_SERVICE_URL", "GATEWAY_PORT",
-	}
-	env := make(map[string]string, len(requiredEnv))
-	for _, key := range requiredEnv {
-		val := os.Getenv(key)
-		if val == "" {
-			log.Fatalf("[Gateway] Missing env: %s", key)
-		}
-		env[key] = val
-	}
-	log.Printf("[Gateway] HTTP server on :%s", env["GATEWAY_PORT"])
+const (
+	ctJSON                  = "application/json"
+	ctHdr                   = "Content-Type"
+	orderServiceUnreachable = "order service unreachable"
+)
 
-	http.HandleFunc("/choreographed_order",
-		authenticateRequest(env["AUTH_SERVICE_URL"], createOrderHandler(env["CHOREOGRAPHER_ORDER_SERVICE_URL"])))
-	http.HandleFunc("/orchestrated_order",
-		authenticateRequest(env["AUTH_SERVICE_URL"], createOrderHandler(env["ORCHESTRATOR_MAIN_SERVICE_URL"])))
-	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("SAGA API Gateway attivo!"))
-	})
-	log.Fatal(http.ListenAndServe(":"+env["GATEWAY_PORT"], nil))
+// mustGet retrieves an environment variable and panics if it is not set.
+func mustGet(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("missing env: %s", key)
+	}
+	return v
 }
 
-// authenticateRequest is middleware that queries an external authentication service.
-func authenticateRequest(authServiceURL string, next http.HandlerFunc) http.HandlerFunc {
+var (
+	chInv = mustGet("CHOREOGRAPHER_INVENTORY_BASE_URL")
+	orInv = mustGet("ORCHESTRATOR_INVENTORY_BASE_URL")
+
+	chAuth = mustGet("CHOREOGRAPHER_AUTH_BASE_URL")
+	orAuth = mustGet("ORCHESTRATOR_AUTH_BASE_URL")
+
+	chOrder = mustGet("CHOREOGRAPHER_ORDER_BASE_URL")
+	orOrder = mustGet("ORCHESTRATOR_ORDER_BASE_URL")
+)
+
+// withCORS adds CORS headers to the response and handles preflight requests.
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		customerID := r.Header.Get("X-Customer-ID")
-		if customerID == "" {
-			http.Error(w, "Unauthorized: X-Customer-ID missing", http.StatusUnauthorized)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Customer-ID")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
-		validatedID, err := callAuthService(authServiceURL, customerID)
-		if err != nil {
-			http.Error(w, "Authentication failed", http.StatusUnauthorized)
-			return
-		}
-
-		var req events.OrderCreatedPayload
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		req.CustomerID = validatedID
-
-		body, _ := json.Marshal(req)
-		r.Body = io.NopCloser(bytes.NewBuffer(body))
-		r.ContentLength = int64(len(body))
-		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-
-		next.ServeHTTP(w, r)
+		next(w, r)
 	}
 }
 
-// callAuthService simulates an HTTP call to an external authentication service.
-func callAuthService(authServiceURL, customerID string) (string, error) {
-	req := map[string]string{"customer_id": customerID}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return "", fmt.Errorf("payload error: %w", err)
-	}
+// authenticate checks for the X-Customer-ID header and validates it against the auth service.
+func authenticate(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cid := r.Header.Get("X-Customer-ID")
+		if cid == "" {
+			http.Error(w, "missing X-Customer-ID", http.StatusUnauthorized)
+			return
+		}
+		flow := r.URL.Query().Get("flow")
+		authURL := chAuth + "/validate"
+		if flow == "orchestrated" {
+			authURL = orAuth + "/validate"
+		}
 
-	resp, err := http.Post(authServiceURL+"/validate", "application/json", bytes.NewBuffer(body))
-	if err != nil {
-		return "", fmt.Errorf("auth service error: %w", err)
+		body, _ := json.Marshal(map[string]string{"customer_id": cid})
+		resp, err := http.Post(authURL, ctJSON, bytes.NewReader(body))
+		if err != nil || resp.StatusCode != http.StatusOK {
+			http.Error(w, "auth service unreachable", http.StatusBadGateway)
+			return
+		}
+		next(w, r)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("auth service status %d: %s", resp.StatusCode, b)
-	}
-
-	var res struct {
-		CustomerID string `json:"customer_id"`
-		Valid      bool   `json:"valid"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", fmt.Errorf("decode error: %w", err)
-	}
-	if !res.Valid || res.CustomerID == "" {
-		return "", fmt.Errorf("invalid credentials")
-	}
-	return res.CustomerID, nil
 }
 
-// createOrderHandler forwards the request to the Order service.
-func createOrderHandler(targetServiceURL string) http.HandlerFunc {
+// createOrderHandler handles order creation requests and proxies them to the appropriate service.
+func createOrderHandler(baseURL string) http.HandlerFunc {
+	client := &http.Client{Timeout: 15 * time.Second}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		req, err := decodeAndValidateOrderRequest(w, r)
+		url := baseURL + "/create_order"
+		req, _ := http.NewRequest(http.MethodPost, url, r.Body)
+		req.Header.Set(ctHdr, ctJSON)
+
+		resp, err := client.Do(req)
 		if err != nil {
+			http.Error(w, orderServiceUnreachable, http.StatusBadGateway)
 			return
 		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
-		statusCode, responseBody, err := sendRequestToTargetService(targetServiceURL, prepareOrderServicePayload(req))
-		if err != nil {
-			handleTargetServiceError(w, err, statusCode, responseBody)
-			return
-		}
-
-		if _, err := w.Write(responseBody); err != nil {
-			log.Printf("[Gateway] Client response write error: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		} else {
-			w.WriteHeader(statusCode)
-		}
+		w.Header().Set(ctHdr, ctJSON)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
 	}
 }
 
-// decodeAndValidateOrderRequest handles the decoding and initial validation of the request.
-func decodeAndValidateOrderRequest(w http.ResponseWriter, r *http.Request) (events.OrderCreatedPayload, error) {
-	var req events.OrderCreatedPayload
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Richiesta non valida", http.StatusBadRequest)
-		return req, err
+// catalogProxy retrieves the catalog from the appropriate inventory service based on the flow type.
+func catalogProxy(w http.ResponseWriter, r *http.Request) {
+	base := chInv
+	if r.URL.Query().Get("flow") == "orchestrated" {
+		base = orInv
 	}
-	if req.CustomerID == "" || len(req.Items) == 0 {
-		http.Error(w, "CustomerID e almeno un item sono obbligatori", http.StatusBadRequest)
-		return req, fmt.Errorf("dati mancanti")
-	}
-	for _, item := range req.Items {
-		if item.ProductID == "" || item.Quantity <= 0 {
-			http.Error(w, "Ogni item deve avere ProductID e Quantity > 0", http.StatusBadRequest)
-			return req, fmt.Errorf("item non valido")
-		}
-	}
-	return req, nil
-}
-
-// prepareOrderServicePayload constructs the payload to be sent to the target service.
-func prepareOrderServicePayload(req events.OrderCreatedPayload) interface{} {
-	items := make([]events.OrderItem, 0, len(req.Items))
-	for _, item := range req.Items {
-		if item.ProductID != "" && item.Quantity > 0 {
-			items = append(items, events.OrderItem{
-				ProductID: item.ProductID,
-				Quantity:  item.Quantity,
-				Price:     0.0,
-			})
-		}
-	}
-	return events.Order{CustomerID: req.CustomerID, Items: items}
-}
-
-// sendRequestToTargetService serializes and sends the request to the target service.
-func sendRequestToTargetService(url string, payload interface{}) (int, []byte, error) {
-	jsonBody, err := json.Marshal(payload)
-	if err != nil {
-		return http.StatusInternalServerError, nil, err
-	}
-
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return 0, nil, err
+	resp, err := http.Get(base + "/catalog")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, "inventory unreachable", http.StatusBadGateway)
+		return
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return http.StatusInternalServerError, nil, err
-	}
-
-	return resp.StatusCode, responseBody, nil
+	w.Header().Set(ctHdr, ctJSON)
+	_, _ = io.Copy(w, resp.Body)
 }
 
-// handleTargetServiceError handles the communication error with the target service.
-func handleTargetServiceError(w http.ResponseWriter, err error, statusCode int, responseBody []byte) {
-	log.Printf("[Gateway] Target service error: %v", err)
-	if statusCode == 0 {
-		http.Error(w, "Destination service connection error", http.StatusBadGateway)
+// ordersListProxy retrieves the list of orders for a customer from the appropriate order service.
+func ordersListProxy(w http.ResponseWriter, r *http.Request) {
+	cid := r.URL.Query().Get("customer_id")
+	if cid == "" {
+		http.Error(w, "customer_id required", http.StatusBadRequest)
 		return
 	}
-	http.Error(w, string(responseBody), statusCode)
+	base := chOrder
+	if r.URL.Query().Get("flow") == "orchestrated" {
+		base = orOrder
+	}
+	url := fmt.Sprintf("%s/orders?customer_id=%s", base, cid)
+	resp, err := http.Get(url)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, orderServiceUnreachable, http.StatusBadGateway)
+		return
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	w.Header().Set(ctHdr, ctJSON)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// orderStatusProxy retrieves the status of a specific order by ID from the appropriate order service.
+func orderStatusProxy(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+	flow := r.URL.Query().Get("flow")
+	base := chOrder
+	if flow == "orchestrated" {
+		base = orOrder
+	}
+	resp, err := http.Get(base + "/orders/" + id)
+	if err != nil {
+		http.Error(w, orderServiceUnreachable, http.StatusBadGateway)
+		return
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	w.Header().Set(ctHdr, ctJSON)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// authProxy handles authentication requests and proxies them to the appropriate auth service.
+func authProxy(w http.ResponseWriter, r *http.Request) {
+	flow := r.URL.Query().Get("flow")
+	base := chAuth
+	if flow == "orchestrated" {
+		base = orAuth
+	}
+	url := base + r.URL.Path
+
+	req, _ := http.NewRequest(r.Method, url, r.Body)
+	req.Header = r.Header
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "auth unreachable", http.StatusBadGateway)
+		return
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	w.Header().Set(ctHdr, ctJSON)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func main() {
+	port := mustGet("GATEWAY_PORT")
+
+	http.HandleFunc("/choreographed_order",
+		withCORS(authenticate(createOrderHandler(chOrder))))
+	http.HandleFunc("/orchestrated_order",
+		withCORS(authenticate(createOrderHandler(orOrder))))
+
+	http.HandleFunc("/catalog", withCORS(catalogProxy))
+	http.HandleFunc("/orders", withCORS(authenticate(ordersListProxy)))
+	http.HandleFunc("/orders/", withCORS(authenticate(orderStatusProxy)))
+
+	http.HandleFunc("/register", withCORS(authProxy))
+	http.HandleFunc("/login", withCORS(authProxy))
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Gateway OK"))
+	})
+
+	log.Printf("[Gateway] listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

@@ -2,15 +2,16 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 
 	"github.com/StitchMl/saga-demo/choreographer_saga/shared"
 	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
-	"github.com/StitchMl/saga-demo/common/types"
+	events "github.com/StitchMl/saga-demo/common/types"
 )
+
+const payloadErrorLogFmt = "Inventory Service: Payload error: %v"
 
 var eventBus *shared.EventBus
 
@@ -19,7 +20,7 @@ func main() {
 
 	rabbitMQURL := os.Getenv("RABBITMQ_URL")
 	if rabbitMQURL == "" {
-		log.Fatal("RABBITMQ_URL non impostata")
+		log.Fatal("RABBITMQ_URL not set")
 	}
 
 	eventBus, err := shared.NewEventBus(rabbitMQURL)
@@ -29,8 +30,9 @@ func main() {
 	defer eventBus.Close()
 
 	for event, handler := range map[events.EventType]func(interface{}){
-		events.OrderCreatedEvent:    handleOrderCreatedEvent,
-		events.RevertInventoryEvent: handleRevertInventoryEvent,
+		events.OrderCreatedEvent:               handleOrderCreatedEvent,
+		events.RevertInventoryEvent:            handleRevertInventoryEvent,
+		events.InventoryReservationFailedEvent: handleInventoryReservationFailed,
 	} {
 		if err := eventBus.Subscribe(event, handler); err != nil {
 			log.Fatalf("Subscription error %s: %v", event, err)
@@ -38,6 +40,7 @@ func main() {
 	}
 
 	http.HandleFunc("/products/prices", getProductPricesHandler)
+	http.HandleFunc("/catalog", catalogHandler)
 
 	port := os.Getenv("INVENTORY_SERVICE_PORT")
 	if port == "" {
@@ -47,37 +50,13 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-func getProductPricesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	productIDs := r.URL.Query()["product_id"]
-	if len(productIDs) == 0 {
-		http.Error(w, "Missing 'product_id' query parameter(s)", http.StatusBadRequest)
-		return
-	}
-
-	prices := make(map[string]float64, len(productIDs))
-	for _, id := range productIDs {
-		if price, ok := inventorydb.GetProductPrice(id); ok {
-			prices[id] = price
-		} else {
-			http.Error(w, fmt.Sprintf("Product ID %s not found", id), http.StatusNotFound)
-			return
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(prices)
-}
+// ---------- Handlers ----------
 
 // handleOrderCreatedEvent handles the order creation request
 func handleOrderCreatedEvent(eventPayload interface{}) {
 	var payload events.OrderCreatedPayload
 	if err := mapToStruct(eventPayload, &payload); err != nil {
-		log.Printf("Inventory Service: Payload error: %v", err)
+		log.Printf(payloadErrorLogFmt, err)
 		return
 	}
 
@@ -116,26 +95,18 @@ func handleOrderCreatedEvent(eventPayload interface{}) {
 		payload.OrderID,
 		"Inventory reserved successfully",
 		events.InventoryReservedPayload{
-			OrderID: payload.OrderID,
-			Items:   reservedItems,
+			OrderID:    payload.OrderID,
+			CustomerID: payload.CustomerID,
+			Items:      reservedItems,
 		},
 	))
-}
-
-// mapToStruct performs a generic conversion from an interface{} to struct via JSON.
-func mapToStruct(src interface{}, dst interface{}) error {
-	b, err := json.Marshal(src)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, dst)
 }
 
 // handleRevertInventoryEvent handles the inventory clearing request
 func handleRevertInventoryEvent(eventPayload interface{}) {
 	var payload events.OrderCreatedPayload
 	if err := mapToStruct(eventPayload, &payload); err != nil {
-		log.Printf("Inventory Service: Payload error: %v", err)
+		log.Printf(payloadErrorLogFmt, err)
 		return
 	}
 
@@ -146,4 +117,64 @@ func handleRevertInventoryEvent(eventPayload interface{}) {
 		inventorydb.DB.Inventory.Data[item.ProductID] += item.Quantity
 	}
 	log.Printf("Inventory Service: Restored %d items for Order %s.", len(payload.Items), payload.OrderID)
+}
+
+// handleInventoryReservationFailed handles the case where inventory reservation fails
+func handleInventoryReservationFailed(eventPayload interface{}) {
+	var payload events.InventoryReservationFailedPayload
+	if err := mapToStruct(eventPayload, &payload); err != nil {
+		log.Printf(payloadErrorLogFmt, err)
+		return
+	}
+	log.Printf("Inventory reservation failed for Order %s, Product %s: %s",
+		payload.OrderID, payload.ProductID, payload.Reason)
+}
+
+// ---------- Helpers ----------
+
+// catalogHandler handles requests to get the product catalog
+func catalogHandler(w http.ResponseWriter, _ *http.Request) {
+	type Product struct {
+		ID          string  `json:"id"`
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		Price       float64 `json:"price"`
+		Available   int     `json:"available"`
+	}
+
+	// In this example, collect data from DataStore in-memory
+	inventorydb.DB.Inventory.RLock()
+	inventorydb.DB.Prices.RLock()
+	defer inventorydb.DB.Inventory.RUnlock()
+	defer inventorydb.DB.Prices.RUnlock()
+
+	list := make([]Product, 0, len(inventorydb.DB.Inventory.Data))
+	for id, qty := range inventorydb.DB.Inventory.Data {
+		price := inventorydb.DB.Prices.Data[id]
+		list = append(list, Product{
+			ID: id, Name: id, Description: "",
+			Price: price, Available: qty,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(list)
+}
+
+// getProductPricesHandler handles requests to get product prices
+func getProductPricesHandler(w http.ResponseWriter, r *http.Request) {
+	productID := r.URL.Query().Get("id")
+	if price, ok := inventorydb.GetProductPrice(productID); ok {
+		_ = json.NewEncoder(w).Encode(map[string]float64{"price": price})
+		return
+	}
+	http.Error(w, "product not found", http.StatusNotFound)
+}
+
+// mapToStruct performs a generic conversion from an interface{} to struct via JSON.
+func mapToStruct(src interface{}, dst interface{}) error {
+	b, err := json.Marshal(src)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, dst)
 }

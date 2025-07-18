@@ -1,203 +1,113 @@
 services:
-  # RabbitMQ per Event-Bus
+  # ------------- broker (choreographed only) -------------
   rabbitmq:
     image: rabbitmq:3.13-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    ports: ["5672:5672", "15672:15672"]
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_log:/var/log/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - saga-network
+
+  # --- CHOREOGRAPHER SAGA SERVICES ---
+  choreographer-order-service:
+    build: {context: ., dockerfile: backend/orchestrator_saga/services/order_service/Dockerfile}
+    environment:
+      ORDER_SERVICE_PORT: 8081
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      INVENTORY_SERVICE_URL: http://choreographer-inventory-service:8082
+    depends_on: {rabbitmq: {condition: service_healthy}}
+
+  choreographer-inventory-service:
+    build: {context: ., dockerfile: backend/choreographer_saga/services/inventory_service/Dockerfile}
+    environment:
+      INVENTORY_SERVICE_PORT: 8082
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on: {rabbitmq: {condition: service_healthy}}
+
+  choreographer-payment-service:
+    build: {context: ., dockerfile: backend/choreographer_saga/services/payment_service/Dockerfile}
+    environment:
+      PAYMENT_SERVICE_PORT: 8083
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on: { rabbitmq: { condition: service_healthy } }
+
+  choreographer-auth-service:
+    build: {context: ., dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile}
+    environment:
+      AUTH_SERVICE_PORT: 8084
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on: { rabbitmq: { condition: service_healthy } }
 
   # --- ORCHESTRATOR SAGA SERVICES ---
   orchestrator-order-service:
-    build:
-      context: .
-      dockerfile: backend/orchestrator_saga/services/order_service/Dockerfile
-    container_name: orchestrator_order_service
-    ports:
-      - "8081:8081"
+    build: {context: ., dockerfile: backend/orchestrator_saga/services/order_service/Dockerfile}
     environment:
       ORDER_SERVICE_PORT: 8081
-    networks:
-      - saga-network
 
   orchestrator-inventory-service:
-    build:
-      context: .
-      dockerfile: backend/orchestrator_saga/services/inventory_service/Dockerfile
-    container_name: orchestrator_inventory_service
-    ports:
-      - "8082:8082"
+    build: {context: ., dockerfile: backend/orchestrator_saga/services/inventory_service/Dockerfile}
     environment:
       INVENTORY_SERVICE_PORT: 8082
-    networks:
-      - saga-network
 
   orchestrator-payment-service:
-    build:
-      context: .
-      dockerfile: backend/orchestrator_saga/services/payment_service/Dockerfile
-    container_name: orchestrator_payment_service
-    ports:
-      - "8083:8083"
+    build: {context: ., dockerfile: backend/orchestrator_saga/services/payment_service/Dockerfile}
     environment:
       PAYMENT_SERVICE_PORT: 8083
-    networks:
-      - saga-network
 
   orchestrator-auth-service:
-    build:
-      context: .
-      dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile
-    ports:
-      - "8084:8084"
+    build: {context: ., dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile}
     environment:
       AUTH_SERVICE_PORT: 8084
-    networks:
-      - saga-network
 
   # MAIN ORCHESTRATOR SERVICE
   orchestrator:
-    build:
-      context: .
-      dockerfile: backend/orchestrator_saga/Dockerfile
-    container_name: orchestrator_main
-    ports:
-      - "8080:8080"
+    build: {context: ., dockerfile: backend/orchestrator_saga/Dockerfile}
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       ServerPort: 8080
       OrderServiceURL: http://orchestrator-order-service:8081
       InventoryServiceURL: http://orchestrator-inventory-service:8082
       PaymentServiceURL: http://orchestrator-payment-service:8083
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      orchestrator-order-service:
-        condition: service_started
-      orchestrator-inventory-service:
-        condition: service_started
-      orchestrator-payment-service:
-        condition: service_started
-    networks: [saga-network]
 
-  # --- CHOREOGRAPHER SAGA SERVICES ---
-  choreographer-order-service:
-    build:
-      context: .
-      dockerfile: backend/choreographer_saga/services/order_service/Dockerfile
-    container_name: choreographer_order_service
-    ports:
-      - "8085:8081"
-    environment:
-      ORDER_SERVICE_PORT: 8081
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      INVENTORY_SERVICE_URL: http://choreographer-inventory-service:8081
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      choreographer-inventory-service:
-        condition: service_started
-    networks:
-      - saga-network
-
-  choreographer-inventory-service:
-    build:
-      context: .
-      dockerfile: backend/choreographer_saga/services/inventory_service/Dockerfile
-    ports:
-      - "8086:8082"
-    container_name: choreographer_inventory_service
-    environment:
-      INVENTORY_SERVICE_PORT: 8082
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    networks:
-      - saga-network
-
-  choreographer-payment-service:
-    build:
-      context: .
-      dockerfile: backend/choreographer_saga/services/payment_service/Dockerfile
-    ports:
-      - "8087:8083"
-    container_name: choreographer_payment_service
-    environment:
-      PAYMENT_SERVICE_PORT: 8083
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    networks:
-      - saga-network
-
-  choreographer-auth-service:
-    build:
-      context: .
-      dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile
-    ports:
-      - "8088:8084"
-    environment:
-      AUTH_SERVICE_PORT: 8090
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    networks:
-      - saga-network
-
-  # --- Gateway API ---
+  # ---------- GATEWAY and FRONTEND (always active) ----------
+  # --- API Gateway ---
   api-gateway:
-    build:
-      context: .
-      dockerfile: backend/gateway/Dockerfile
-    ports:
-      - "8000:8000"
+    build: {context: ., dockerfile: backend/gateway/Dockerfile}
+    ports: ["8000:8000"]
     environment:
-      ORDER_SERVICE_URL: http://choreographer-order-service:8080/create_order
-      AUTH_SERVICE_URL: http://choreographer-auth-service:8090
       GATEWAY_PORT: 8000
-      CHOREOGRAPHER_ORDER_SERVICE_URL: http://choreographer-order-service:8080/create_order
-      ORCHESTRATOR_MAIN_SERVICE_URL: http://orchestrator:8080/create_order
+      CHOREOGRAPHER_INVENTORY_BASE_URL: http://choreographer-inventory-service:8082
+      ORCHESTRATOR_INVENTORY_BASE_URL:  http://orchestrator-inventory-service:8082
+      CHOREOGRAPHER_ORDER_BASE_URL:     http://choreographer-order-service:8081
+      ORCHESTRATOR_ORDER_BASE_URL:      http://orchestrator-order-service:8081
+      CHOREOGRAPHER_ORDER_SERVICE_URL:  http://choreographer-order-service:8081/create_order
+      ORCHESTRATOR_MAIN_SERVICE_URL:    http://orchestrator:8080/create_order
+      CHOREOGRAPHER_AUTH_BASE_URL:      http://choreographer-auth-service:8084
+      ORCHESTRATOR_AUTH_BASE_URL:       http://orchestrator-auth-service:8084
     depends_on:
-      - choreographer-order-service
-      - choreographer-auth-service
-      - orchestrator
-    networks:
-      - saga-network
+      - choreographer-inventory-service
+      - orchestrator-inventory-service
 
   # --- Frontend Service ---
   frontend:
     image: node:20-alpine
-    container_name: saga-frontend
     working_dir: /app
-    volumes:
-      - ./frontend:/app
-    ports:
-      - "8090:3000"
+    volumes: [ "./frontend:/app" ]
+    ports: [ "8090:3000" ]
     environment:
-      FRONTEND_PORT: 3000
-      HOST: 0.0.0.0
+      - REACT_APP_API_BASE_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
     command: sh -c "npm install && npm start"
-    depends_on:
-      - api-gateway
-    networks:
-      - saga-network
+    depends_on: { api-gateway: { condition: service_started } }
 
 networks:
-  saga-network:
-    driver: bridge
-    enable_ipv6: false
+  default:
 
 volumes:
   rabbitmq_data:

@@ -11,9 +11,11 @@ import (
 )
 
 const (
-	errorEncode = "Failed to encode response"
-	errorBody   = "Invalid request body"
-	errorMethod = "Method not allowed"
+	errorEncode     = "Failed to encode response"
+	errorBody       = "Invalid request body"
+	errorMethod     = "Method not allowed"
+	contentTypeJSON = "application/json"
+	contentType     = "Content-Type"
 )
 
 // In-memory database for payment transactions (local record of the Payment Service)
@@ -41,11 +43,18 @@ func processPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		OrderID, CustomerID string
-		Amount              float64
+		OrderID    string  `json:"order_id"`
+		CustomerID string  `json:"customer_id"`
+		Amount     float64 `json:"amount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, errorBody, http.StatusBadRequest)
+		// rispondi SEMPRE in JSON: l’Orchestrator si aspetta JSON
+		w.Header().Set(contentType, contentTypeJSON)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": errorBody,
+		})
 		return
 	}
 
@@ -59,12 +68,17 @@ func processPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	defer transactionsDB.Unlock()
 	if err != nil || status != "success" {
 		transactionsDB.Data[req.OrderID] = "failed"
-		http.Error(w, errorEncode, http.StatusBadRequest)
+		w.Header().Set(contentType, contentTypeJSON)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": errorEncode,
+		})
 		return
 	}
 
 	transactionsDB.Data[req.OrderID] = "processed"
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Payment processed"})
 }
 
@@ -76,11 +90,17 @@ func revertPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		OrderID string `json:"order_id"`
-		Reason  string `json:"reason"`
+		OrderID    string  `json:"order_id"`
+		CustomerID string  `json:"customer_id"`
+		Amount     float64 `json:"amount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, errorBody, http.StatusBadRequest)
+		w.Header().Set(contentType, contentTypeJSON)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": errorBody,
+		})
 		return
 	}
 
@@ -92,13 +112,13 @@ func revertPaymentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gatewayStatus, gatewayErr := payment_gateway.RevertPayment(req.OrderID, req.Reason)
+	gatewayStatus, gatewayErr := payment_gateway.RevertPayment(req.OrderID, "Reverting payment for order "+req.OrderID)
 	if gatewayErr != nil || gatewayStatus != "success" {
 		http.Error(w, "Payment reversal failed at gateway", http.StatusInternalServerError)
 		return
 	}
 
 	transactionsDB.Data[req.OrderID] = "reverted"
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Payment cancelled"})
 }

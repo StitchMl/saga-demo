@@ -6,14 +6,24 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
-	"github.com/StitchMl/saga-demo/common/types"
+	events "github.com/StitchMl/saga-demo/common/types"
+)
+
+const (
+	contentTypeJSON = "application/json"
+	contentType     = "Content-Type"
 )
 
 func main() {
+	inventorydb.InitDB()
 	http.HandleFunc("/create_order", createOrderHandler)
+	http.HandleFunc("/orders/", getOrderHandler)
+	http.HandleFunc("/orders", listOrdersHandler)
+	http.HandleFunc("/products/prices", getPricesHandler)
 	http.HandleFunc("/confirm", confirmOrderHandler)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -22,11 +32,55 @@ func main() {
 
 	port := os.Getenv("ORDER_SERVICE_PORT")
 	if port == "" {
-		port = "8081"
+		log.Fatal("ORDER_SERVICE_PORT is not set")
 	}
 
 	log.Printf("Order Service listening on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+// listOrdersHandler returns all orders
+func listOrdersHandler(w http.ResponseWriter, r *http.Request) {
+	cid := r.URL.Query().Get("customer_id")
+
+	inventorydb.DB.Orders.RLock()
+	out := make([]events.Order, 0, len(inventorydb.DB.Orders.Data))
+	for _, o := range inventorydb.DB.Orders.Data {
+		if cid == "" || o.CustomerID == cid {
+			out = append(out, o)
+		}
+	}
+	inventorydb.DB.Orders.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// getOrderHandler retrieves an order by its ID.
+func getOrderHandler(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/orders/")
+	if order, ok := inventorydb.GetOrder(id); ok {
+		_ = json.NewEncoder(w).Encode(order)
+		return
+	}
+	http.Error(w, "order not found", http.StatusNotFound)
+}
+
+// getPricesHandler retrieves the prices of products based on product IDs provided in the query parameters.
+func getPricesHandler(w http.ResponseWriter, r *http.Request) {
+	ids := r.URL.Query()["product_id"]
+	if len(ids) == 0 {
+		http.Error(w, "product_id param required", http.StatusBadRequest)
+		return
+	}
+	result := make(map[string]float64, len(ids))
+	for _, id := range ids {
+		if p, ok := inventorydb.GetProductPrice(id); ok {
+			result[id] = p
+		}
+	}
+	w.Header().Set(contentType, contentTypeJSON)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // createOrderHandler handles the initial order creation request from the Orchestrator.
@@ -57,7 +111,7 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf(" - Item: ProductID: %s, Quantity: %d", item.ProductID, item.Quantity)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"order_id": order.OrderID,
 		"status":   order.Status,
@@ -83,18 +137,16 @@ func confirmOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	inventorydb.DB.Orders.Lock()
 	order, exists := inventorydb.DB.Orders.Data[req.OrderID]
-	if exists {
+	if !exists {
+		inventorydb.DB.Orders.Data[req.OrderID] = events.Order{
+			OrderID: req.OrderID, Status: req.Status}
+	} else {
 		order.Status = req.Status
 		inventorydb.DB.Orders.Data[req.OrderID] = order
 	}
 	inventorydb.DB.Orders.Unlock()
 
-	if !exists {
-		http.Error(w, "Order not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",
 		"message": "Order status updated",
