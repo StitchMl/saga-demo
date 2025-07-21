@@ -85,6 +85,8 @@ services:
   # --- API Gateway ---
   api-gateway:
     build: {context: ., dockerfile: backend/gateway/Dockerfile}
+    ports:
+      - "${GATEWAY_PORT:-8000}:${GATEWAY_PORT:-8000}"
     environment:
       GATEWAY_PORT: 8000
       CHOREOGRAPHER_INVENTORY_BASE_URL: http://choreographer-inventory-service:8082
@@ -113,7 +115,7 @@ services:
       - REACT_APP_API_BASE_URL=http://localhost:${GATEWAY_PORT:-8000}
       - CHOKIDAR_USEPOLLING=true
       - NODE_OPTIONS=--no-deprecation
-    command: sh -c "npm install && npm start"
+    command: sh -c "if [ ! -d 'node_modules' ]; then npm install; fi && npm start"
     depends_on: { api-gateway: { condition: service_started } }
 
 networks:
