@@ -85,7 +85,6 @@ services:
   # --- API Gateway ---
   api-gateway:
     build: {context: ., dockerfile: backend/gateway/Dockerfile}
-    ports: ["8000:8000"]
     environment:
       GATEWAY_PORT: 8000
       CHOREOGRAPHER_INVENTORY_BASE_URL: http://choreographer-inventory-service:8082
