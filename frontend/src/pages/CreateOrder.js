@@ -140,7 +140,7 @@ export default function CreateOrder() {
                 <form onSubmit={handleSubmit}>
                     <CardContent>
                         <Typography variant="h5" gutterBottom>
-                            Crea Nuovo Ordine ({flow})
+                            Create New Order ({flow})
                         </Typography>
 
                         {items.map((it, idx) => (
