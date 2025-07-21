@@ -31,11 +31,11 @@ export default function Catalog() {
                 }));
                 setProducts(formattedProducts);
             } else {
-                console.error("La risposta dell'API non è un array:", data);
+                console.error("The API response is not an array:", data);
                 setProducts([]);
             }
         } catch (error) {
-            console.error("Errore nel recupero del catalogo:", error);
+            console.error("Error in retrieving catalogue:", error);
             setProducts([]);
         } finally {
             setLoading(false);
@@ -65,13 +65,14 @@ export default function Catalog() {
                             height="140"
                             image={p.image_url || `https://via.placeholder.com/300x150.png/007bff/FFFFFF?text=${p.name}`}
                             alt={p.name}
+                            sx={{ objectFit: 'cover' }}
                         />
                         <CardContent sx={{ flexGrow: 1 }}>
                             <Typography variant="h6" component="div">
                                 {p.name}
                             </Typography>
                             <Typography variant="body2" color="text.secondary">
-                                {p.description || "Nessuna descrizione disponibile."}
+                                {p.description || "No description available."}
                             </Typography>
                             <Box
                                 sx={{

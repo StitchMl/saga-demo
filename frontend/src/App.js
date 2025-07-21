@@ -42,7 +42,7 @@ export default function App() {
                             <Route path="/catalog" element={<Catalog />} />
                             <Route path="/create" element={<CreateOrder />} />
                             <Route path="/status" element={<OrderStatus />} />
-                            <Route path="/orders/:orderId" element={<OrderDetail />} /> {}
+                            <Route path="/orders/:orderId" element={<OrderDetail />} />
                             <Route path="/login" element={<LoginRegister />} />
                         </Routes>
                     </FlowProvider>
