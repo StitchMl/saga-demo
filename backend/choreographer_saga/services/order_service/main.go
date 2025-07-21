@@ -3,10 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,9 +15,14 @@ import (
 	events "github.com/StitchMl/saga-demo/common/types"
 )
 
+const (
+	contentTypeJSON = "application/json"
+	contentType     = "Content-Type"
+)
+
 var (
-	eventBus            *shared.EventBus
-	inventoryServiceURL string
+	eventBus           *shared.EventBus
+	paymentAmountLimit float64
 )
 
 func main() {
@@ -25,13 +30,21 @@ func main() {
 	inventorydb.InitDB()
 
 	rabbitMQURL := os.Getenv("RABBITMQ_URL")
-	inventoryServiceURL = os.Getenv("INVENTORY_SERVICE_URL")
 	port := os.Getenv("ORDER_SERVICE_PORT")
-	if rabbitMQURL == "" || inventoryServiceURL == "" || port == "" {
-		log.Fatal("Missing env: RABBITMQ_URL, INVENTORY_SERVICE_URL, ORDER_SERVICE_PORT")
+	if rabbitMQURL == "" || port == "" {
+		log.Fatal("Missing env: RABBITMQ_URL, ORDER_SERVICE_PORT")
 	}
 
+	limitStr := os.Getenv("PAYMENT_AMOUNT_LIMIT")
+	if limitStr == "" {
+		log.Fatal("PAYMENT_AMOUNT_LIMIT not set")
+	}
 	var err error
+	paymentAmountLimit, err = strconv.ParseFloat(limitStr, 64)
+	if err != nil {
+		log.Fatalf("Invalid PAYMENT_AMOUNT_LIMIT: %v", err)
+	}
+
 	eventBus, err = shared.NewEventBus(rabbitMQURL)
 	if err != nil {
 		log.Fatalf("Unable to create EventBus: %v", err)
@@ -39,14 +52,14 @@ func main() {
 	defer eventBus.Close()
 
 	// Subscriptions
-	subscribe(events.OrderApprovedEvent, handleOrderApprovedEvent)
-	subscribe(events.OrderRejectedEvent, handleOrderRejectedEvent)
+	subscribe(events.PaymentProcessedEvent, handleOrderApprovedEvent)
+	subscribe(events.PaymentFailedEvent, handlePaymentFailedEvent)
+	subscribe(events.InventoryReservationFailedEvent, handleInventoryReservationFailed)
 
 	// REST endpoints
 	http.HandleFunc("/create_order", createOrderHandler)
 	http.HandleFunc("/orders/", getOrderHandler)
 	http.HandleFunc("/orders", listOrdersHandler)
-	http.HandleFunc("/products/prices", getPricesHandler)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("Choreographer Order Service OK"))
@@ -57,7 +70,7 @@ func main() {
 }
 
 // subscribe: utility to subscribe to events with error handling
-func subscribe(t events.EventType, h func(interface{})) {
+func subscribe(t events.EventType, h shared.EventHandler) {
 	if err := eventBus.Subscribe(t, h); err != nil {
 		log.Fatalf("Subscription error %s: %v", t, err)
 	}
@@ -76,14 +89,17 @@ func listOrdersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	inventorydb.DB.Orders.RUnlock()
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(out)
 }
 
 // getOrderHandler: retrieves a single order
 func getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/orders/")
-	if order, ok := inventorydb.GetOrder(id); ok {
+	inventorydb.DB.Orders.RLock()
+	defer inventorydb.DB.Orders.RUnlock()
+	if order, ok := inventorydb.DB.Orders.Data[id]; ok {
+		w.Header().Set(contentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(order)
 		return
 	}
@@ -103,23 +119,23 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve prices from the Inventory service
-	productIDs := make([]string, len(order.Items))
-	for i, item := range order.Items {
-		productIDs[i] = item.ProductID
-	}
-	prices, err := getPricesFromInventoryService(productIDs)
-	if err != nil {
-		http.Error(w, "Price recovery error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	for i, item := range order.Items {
-		price, ok := prices[item.ProductID]
+	// Synchronous pre-check: calculate total and check against payment limit
+	var totalAmount float64
+	for _, item := range order.Items {
+		price, ok := inventorydb.GetProductPrice(item.ProductID)
 		if !ok {
-			http.Error(w, "Missing price for "+item.ProductID, http.StatusBadRequest)
+			http.Error(w, "Product price not found for "+item.ProductID, http.StatusBadRequest)
 			return
 		}
-		order.Items[i].Price = price
+		totalAmount += price * float64(item.Quantity)
+	}
+
+	if totalAmount > paymentAmountLimit {
+		reason := fmt.Sprintf("L'importo %.2f supera il limite di %.2f", totalAmount, paymentAmountLimit)
+		w.Header().Set(contentType, contentTypeJSON)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": reason})
+		return
 	}
 
 	order.OrderID = fmt.Sprintf("order-%d", time.Now().UnixNano())
@@ -150,64 +166,66 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getPricesHandler for consistency with an orchestrator version
-func getPricesHandler(w http.ResponseWriter, r *http.Request) {
-	ids := r.URL.Query()["product_id"]
-	if len(ids) == 0 {
-		http.Error(w, "product_id param required", http.StatusBadRequest)
-		return
-	}
-	result := make(map[string]float64, len(ids))
-	for _, id := range ids {
-		if p, ok := inventorydb.GetProductPrice(id); ok {
-			result[id] = p
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(result)
-}
-
 // handleOrderApprovedEvent: update status -> approved
-func handleOrderApprovedEvent(eventPayload interface{}) {
-	var payload events.OrderStatusUpdatePayload
-	if err := mapToStruct(eventPayload, &payload); err != nil {
+func handleOrderApprovedEvent(event events.GenericEvent) {
+	var payload events.PaymentPayload
+	if err := mapToStruct(event.Payload, &payload); err != nil {
 		log.Printf("Order Service: Payload error OrderApprovedEvent: %v", err)
 		return
 	}
-
-	inventorydb.DB.Orders.Lock()
-	if order, exists := inventorydb.DB.Orders.Data[payload.OrderID]; exists {
-		order.Status = "approved"
-		inventorydb.DB.Orders.Data[payload.OrderID] = order
-		log.Printf("Order Service: Order %s approved.", payload.OrderID)
-	} else {
-		log.Printf("Order Service: Order %s not found for approval.", payload.OrderID)
-	}
-	inventorydb.DB.Orders.Unlock()
+	updateOrderStatus(payload.OrderID, "approved", "Payment successful", &payload.Amount)
 }
 
-// handleOrderRejectedEvent: update status -> rejected
-func handleOrderRejectedEvent(eventPayload interface{}) {
+// handlePaymentFailedEvent: update status to rejected and trigger compensation
+func handlePaymentFailedEvent(event events.GenericEvent) {
 	var payload events.OrderStatusUpdatePayload
-	if err := mapToStruct(eventPayload, &payload); err != nil {
-		log.Printf("Order Service: Payload error OrderRejectedEvent: %v", err)
+	if err := mapToStruct(event.Payload, &payload); err != nil {
+		log.Printf("Order Service: Payload error for PaymentFailedEvent: %v", err)
 		return
 	}
+	log.Printf("Order Service: Received PaymentFailedEvent for order %s. Reason: %s", payload.OrderID, payload.Reason)
+	updateOrderStatus(payload.OrderID, "rejected", payload.Reason, &payload.Total)
 
-	inventorydb.DB.Orders.Lock()
-	if order, exists := inventorydb.DB.Orders.Data[payload.OrderID]; exists {
-		order.Status = "rejected"
-		inventorydb.DB.Orders.Data[payload.OrderID] = order
-		log.Printf("Order Service: Order %s rejected (%s).", payload.OrderID, payload.Reason)
-	} else {
-		// If not found, create it with a rejected status per a track.
-		inventorydb.DB.Orders.Data[payload.OrderID] = events.Order{
-			OrderID: payload.OrderID,
-			Status:  "rejected",
+	// Trigger inventory compensation
+	if order, ok := inventorydb.GetOrder(payload.OrderID); ok {
+		revertPayload := events.InventoryRequestPayload{
+			OrderID: order.OrderID,
+			Items:   order.Items,
+			Reason:  "Payment failed, reverting inventory reservation.",
 		}
-		log.Printf("Order Service: Created placeholder for missing rejected order %s.", payload.OrderID)
+		if err := eventBus.Publish(events.NewGenericEvent(events.RevertInventoryEvent, order.OrderID, "Reverting inventory", revertPayload)); err != nil {
+			log.Printf("Order Service: Failed to publish RevertInventoryEvent for order %s: %v", order.OrderID, err)
+		}
 	}
-	inventorydb.DB.Orders.Unlock()
+}
+
+// handleInventoryReservationFailed: update status → rejected
+func handleInventoryReservationFailed(event events.GenericEvent) {
+	var payload events.OrderStatusUpdatePayload
+	if err := mapToStruct(event.Payload, &payload); err != nil {
+		log.Printf("Order Service: Payload error for InventoryReservationFailedEvent: %v", err)
+		return
+	}
+	log.Printf("Order Service: Received InventoryReservationFailedEvent for order %s. Reason: %s", payload.OrderID, payload.Reason)
+	updateOrderStatus(payload.OrderID, "rejected", payload.Reason, &payload.Total)
+}
+
+// updateOrderStatus is a helper to change the order status in the DB.
+func updateOrderStatus(orderID, status, reason string, total *float64) {
+	inventorydb.DB.Orders.Lock()
+	defer inventorydb.DB.Orders.Unlock()
+
+	if order, exists := inventorydb.DB.Orders.Data[orderID]; exists {
+		order.Status = status
+		order.Reason = reason // Store the reason
+		if total != nil {
+			order.Total = *total
+		}
+		inventorydb.DB.Orders.Data[orderID] = order
+		log.Printf("Order Service: Order %s status updated to %s. Reason: %s", orderID, status, reason)
+	} else {
+		log.Printf("Order Service: Order %s not found for status update.", orderID)
+	}
 }
 
 // mapToStruct: utility to convert a generic payload into a specific struct.
@@ -217,34 +235,4 @@ func mapToStruct(src, dst interface{}) error {
 		return err
 	}
 	return json.Unmarshal(b, dst)
-}
-
-// getPricesFromInventoryService: retrieve product prices from the Inventory service
-func getPricesFromInventoryService(productIDs []string) (map[string]float64, error) {
-	if inventoryServiceURL == "" {
-		return nil, fmt.Errorf("INVENTORY_SERVICE_URL not set")
-	}
-	if len(productIDs) == 0 {
-		return map[string]float64{}, nil
-	}
-	params := strings.Join(productIDs, "&product_id=")
-	url := fmt.Sprintf("%s/products/prices?product_id=%s", inventoryServiceURL, params)
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("inventory service error: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("inventory status %d: %s", resp.StatusCode, body)
-	}
-
-	var prices map[string]float64
-	if err := json.NewDecoder(resp.Body).Decode(&prices); err != nil {
-		return nil, fmt.Errorf("decode error: %w", err)
-	}
-	return prices, nil
 }

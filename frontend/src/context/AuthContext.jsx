@@ -10,7 +10,7 @@ import { setCustomerIdHeader } from "../api";
 
 const AuthContext = createContext({
     customerId: "",
-    login: () => {},
+    login: (_id) => {},
     logout: () => {}
 });
 

@@ -2,19 +2,17 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 
-const JsonView = ({ data }) => (
-    <Box sx={{ p: 2 }}>
+export const TransactionDetails = ({ data }) => (
+    <Box sx={{ p: 2, backgroundColor: "grey.100", borderRadius: 2, mt: 2 }}>
         <Typography variant="h6" gutterBottom>
-            Dettagli
+            Transaction Details
         </Typography>
-        <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
       {JSON.stringify(data, null, 2)}
     </pre>
     </Box>
 );
 
-JsonView.propTypes = {
+TransactionDetails.propTypes = {
     data: PropTypes.any.isRequired
 };
-
-export default JsonView;

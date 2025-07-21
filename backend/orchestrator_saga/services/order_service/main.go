@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
-	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
 	events "github.com/StitchMl/saga-demo/common/types"
 )
 
@@ -18,13 +18,17 @@ const (
 	contentType     = "Content-Type"
 )
 
+// OrdersDB is an in-memory database for the order service.
+var OrdersDB = struct {
+	sync.RWMutex
+	Data map[string]events.Order
+}{Data: make(map[string]events.Order)}
+
 func main() {
-	inventorydb.InitDB()
 	http.HandleFunc("/create_order", createOrderHandler)
 	http.HandleFunc("/orders/", getOrderHandler)
 	http.HandleFunc("/orders", listOrdersHandler)
-	http.HandleFunc("/products/prices", getPricesHandler)
-	http.HandleFunc("/confirm", confirmOrderHandler)
+	http.HandleFunc("/update_status", updateOrderStatusHandler)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintln(w, "Orchestrator Order Service is healthy!")
@@ -43,14 +47,14 @@ func main() {
 func listOrdersHandler(w http.ResponseWriter, r *http.Request) {
 	cid := r.URL.Query().Get("customer_id")
 
-	inventorydb.DB.Orders.RLock()
-	out := make([]events.Order, 0, len(inventorydb.DB.Orders.Data))
-	for _, o := range inventorydb.DB.Orders.Data {
+	OrdersDB.RLock()
+	out := make([]events.Order, 0, len(OrdersDB.Data))
+	for _, o := range OrdersDB.Data {
 		if cid == "" || o.CustomerID == cid {
 			out = append(out, o)
 		}
 	}
-	inventorydb.DB.Orders.RUnlock()
+	OrdersDB.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
@@ -59,28 +63,14 @@ func listOrdersHandler(w http.ResponseWriter, r *http.Request) {
 // getOrderHandler retrieves an order by its ID.
 func getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/orders/")
-	if order, ok := inventorydb.GetOrder(id); ok {
+	OrdersDB.RLock()
+	defer OrdersDB.RUnlock()
+	if order, ok := OrdersDB.Data[id]; ok {
+		w.Header().Set(contentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(order)
 		return
 	}
 	http.Error(w, "order not found", http.StatusNotFound)
-}
-
-// getPricesHandler retrieves the prices of products based on product IDs provided in the query parameters.
-func getPricesHandler(w http.ResponseWriter, r *http.Request) {
-	ids := r.URL.Query()["product_id"]
-	if len(ids) == 0 {
-		http.Error(w, "product_id param required", http.StatusBadRequest)
-		return
-	}
-	result := make(map[string]float64, len(ids))
-	for _, id := range ids {
-		if p, ok := inventorydb.GetProductPrice(id); ok {
-			result[id] = p
-		}
-	}
-	w.Header().Set(contentType, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(result)
 }
 
 // createOrderHandler handles the initial order creation request from the Orchestrator.
@@ -102,9 +92,9 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	order.Status = "pending"
 
-	inventorydb.DB.Orders.Lock()
-	inventorydb.DB.Orders.Data[order.OrderID] = order
-	inventorydb.DB.Orders.Unlock()
+	OrdersDB.Lock()
+	OrdersDB.Data[order.OrderID] = order
+	OrdersDB.Unlock()
 
 	log.Printf("Order Service: Created order %s for Customer %s. Status: %s", order.OrderID, order.CustomerID, order.Status)
 	for _, item := range order.Items {
@@ -114,37 +104,39 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"order_id": order.OrderID,
-		"status":   order.Status,
+		"status":   "success",
 		"message":  "Order created successfully",
 	})
 }
 
-// confirmOrderHandler handles confirmation or updating the status of an order.
-func confirmOrderHandler(w http.ResponseWriter, r *http.Request) {
+// updateOrderStatusHandler handles updating the status of an order.
+func updateOrderStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req struct {
-		OrderID string `json:"order_id"`
-		Status  string `json:"status"`
-	}
+	var req events.OrderStatusUpdatePayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	inventorydb.DB.Orders.Lock()
-	order, exists := inventorydb.DB.Orders.Data[req.OrderID]
+	OrdersDB.Lock()
+	defer OrdersDB.Unlock()
+	order, exists := OrdersDB.Data[req.OrderID]
 	if !exists {
-		inventorydb.DB.Orders.Data[req.OrderID] = events.Order{
-			OrderID: req.OrderID, Status: req.Status}
-	} else {
-		order.Status = req.Status
-		inventorydb.DB.Orders.Data[req.OrderID] = order
+		http.Error(w, "Order not found", http.StatusNotFound)
+		return
 	}
-	inventorydb.DB.Orders.Unlock()
+
+	log.Printf("Updating status for order %s from %s to %s. Reason: %s", req.OrderID, order.Status, req.Status, req.Reason)
+	order.Status = req.Status
+	order.Reason = req.Reason
+	if req.Total > 0 {
+		order.Total = req.Total
+	}
+	OrdersDB.Data[req.OrderID] = order
 
 	w.Header().Set(contentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(map[string]string{

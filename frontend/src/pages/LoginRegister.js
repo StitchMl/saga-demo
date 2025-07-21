@@ -10,6 +10,7 @@ import {
 import { useState } from "react";
 import { login, register } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { useFlow } from "../context/FlowContext";
 import { useNavigate } from "react-router-dom";
 
 export default function LoginRegister() {
@@ -17,6 +18,7 @@ export default function LoginRegister() {
     const [form, setForm] = useState({});
     const [snack, setSnack] = useState({ open: false, msg: "", severity: "info" });
     const { login: authLogin } = useAuth();
+    const { flow } = useFlow();
     const navigate = useNavigate();
 
     const handleChange = (e) =>
@@ -26,14 +28,15 @@ export default function LoginRegister() {
         e.preventDefault();
         try {
             if (tab === 0) {
-                const { data } = await login(form.username, form.password);
+                const { data } = await login(form.username, form.password, flow);
                 authLogin(data.customer_id);
             } else {
                 const { data } = await register(
                     form.username,
                     form.password,
                     form.name,
-                    form.email
+                    form.email,
+                    flow
                 );
                 authLogin(data.customer_id);
             }
@@ -51,7 +54,7 @@ export default function LoginRegister() {
         <Box sx={{ maxWidth: 400, mx: "auto", mt: 4 }}>
             <Tabs value={tab} onChange={(_, v) => setTab(v)} centered>
                 <Tab label="Login" />
-                <Tab label="Register" />
+                <Tab label="Registrati" />
             </Tabs>
             <Box
                 component="form"
@@ -61,7 +64,7 @@ export default function LoginRegister() {
                 {tab === 1 && (
                     <>
                         <TextField
-                            label="Name"
+                            label="Nome"
                             name="name"
                             required
                             onChange={handleChange}
@@ -89,7 +92,7 @@ export default function LoginRegister() {
                     onChange={handleChange}
                 />
                 <Button type="submit" variant="contained">
-                    {tab === 0 ? "Login" : "Register"}
+                    {tab === 0 ? "Accedi" : "Registrati"}
                 </Button>
             </Box>
 

@@ -31,7 +31,7 @@ export default function OrderStatus() {
     const intervalRef = useRef(null);
 
     const statusColor = (s) => {
-        if (s === "completed") return "success";
+        if (s === "approved" || s === "completed") return "success";
         if (s === "rejected") return "error";
         return "warning";
     };
@@ -56,13 +56,13 @@ export default function OrderStatus() {
             try {
                 const { data } = await fetchAllOrders(customerId);
                 const list = Array.isArray(data) ? data : [];
-                setLastUpdate(new Date());
                 setOrders((prev) => (shouldUpdate(prev, list) ? list : prev));
             } catch (e) {
                 console.error(e);
                 setError("Unable to retrieve orders.");
             } finally {
-                setInitialLoading(false);
+                setLastUpdate(new Date());
+                if (isInitial) setInitialLoading(false);
                 setRefreshing(false);
             }
         },
@@ -106,24 +106,20 @@ export default function OrderStatus() {
         <Box sx={{ p: 2 }}>
             <Toolbar disableGutters sx={{ mb: 2, justifyContent: "space-between" }}>
                 <Typography variant="h6" component="div">
-                    Ordini ({flow})
+                    I Miei Ordini ({flow})
                 </Typography>
                 <Stack direction="row" spacing={2} alignItems="center">
-                    <Typography variant="body2" color="text.secondary">
-                        {(() => {
-                            if (!lastUpdate) return "";
-                            let text = `Last update: ${lastUpdate.toLocaleTimeString()}`;
-                            if (refreshing) text += " (update...)";
-                            return text;
-                        })()}
+                    <Typography variant="caption" color="text.secondary">
+                        {lastUpdate ? `LastUpdate: ${lastUpdate.toLocaleTimeString()}` : ""}
                     </Typography>
                     <Button
                         size="small"
                         variant="outlined"
                         disabled={refreshing}
                         onClick={() => fetchOrders(false)}
+                        startIcon={refreshing ? <CircularProgress size={16} /> : null}
                     >
-                        Update
+                        Aggiorna
                     </Button>
                 </Stack>
             </Toolbar>
@@ -147,7 +143,7 @@ export default function OrderStatus() {
                                 onClick={() => navigate(`/orders/${o.order_id}`)}
                             >
                                 <TableCell>{o.order_id}</TableCell>
-                                <TableCell>{flow}</TableCell>
+                                <TableCell>{o.saga_type || flow}</TableCell>
                                 <TableCell>
                                     <Chip
                                         label={o.status}
@@ -163,7 +159,7 @@ export default function OrderStatus() {
                     ) : (
                         <TableRow>
                             <TableCell colSpan={4} align="center">
-                                No orders found.
+                                Nessun ordine trovato.
                             </TableCell>
                         </TableRow>
                     )}

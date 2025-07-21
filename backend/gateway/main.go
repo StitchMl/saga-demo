@@ -36,6 +36,8 @@ var (
 
 	chOrder = mustGet("CHOREOGRAPHER_ORDER_BASE_URL")
 	orOrder = mustGet("ORCHESTRATOR_ORDER_BASE_URL")
+
+	orchestrator = mustGet("ORCHESTRATOR_SERVICE_URL")
 )
 
 // withCORS adds CORS headers to the response and handles preflight requests.
@@ -68,40 +70,81 @@ func authenticate(next http.HandlerFunc) http.HandlerFunc {
 
 		body, _ := json.Marshal(map[string]string{"customer_id": cid})
 		resp, err := http.Post(authURL, ctJSON, bytes.NewReader(body))
-		if err != nil || resp.StatusCode != http.StatusOK {
-			http.Error(w, "auth service unreachable", http.StatusBadGateway)
-			return
-		}
-		next(w, r)
-	}
-}
-
-// createOrderHandler handles order creation requests and proxies them to the appropriate service.
-func createOrderHandler(baseURL string) http.HandlerFunc {
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		url := baseURL + "/create_order"
-		req, _ := http.NewRequest(http.MethodPost, url, r.Body)
-		req.Header.Set(ctHdr, ctJSON)
-
-		resp, err := client.Do(req)
 		if err != nil {
-			http.Error(w, orderServiceUnreachable, http.StatusBadGateway)
+			http.Error(w, "auth service unreachable", http.StatusBadGateway)
 			return
 		}
 		defer func() {
 			_ = resp.Body.Close()
 		}()
 
-		w.Header().Set(ctHdr, ctJSON)
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
+
+		var authResp struct {
+			Valid bool `json:"valid"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil || !authResp.Valid {
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// createOrderHandler handles order creation requests and proxies them to the appropriate service.
+func createOrderHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	flow := r.URL.Query().Get("flow")
+	baseURL := chOrder
+	if flow == "orchestrated" {
+		baseURL = orchestrator
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	url := baseURL + "/create_order"
+	// The customer ID is in the header, not the body.
+	bodyBytes, _ := io.ReadAll(r.Body)
+	_ = r.Body.Close() // Close the original body
+
+	var orderData map[string]interface{}
+	_ = json.Unmarshal(bodyBytes, &orderData)
+	orderData["customer_id"] = r.Header.Get("X-Customer-ID")
+	newBody, _ := json.Marshal(orderData)
+
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(newBody))
+	req.Header.Set(ctHdr, ctJSON)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, orderServiceUnreachable, http.StatusBadGateway)
+		return
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	w.Header().Set(ctHdr, ctJSON)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// ordersHandler dispatches requests to /orders based on the HTTP method.
+func ordersHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		ordersListProxy(w, r)
+	case http.MethodPost:
+		createOrderHandler(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -199,14 +242,10 @@ func authProxy(w http.ResponseWriter, r *http.Request) {
 func main() {
 	port := mustGet("GATEWAY_PORT")
 
-	http.HandleFunc("/choreographed_order",
-		withCORS(authenticate(createOrderHandler(chOrder))))
-	http.HandleFunc("/orchestrated_order",
-		withCORS(authenticate(createOrderHandler(orOrder))))
+	http.HandleFunc("/orders", withCORS(authenticate(ordersHandler))) // Use the new dispatcher
+	http.HandleFunc("/orders/", withCORS(authenticate(orderStatusProxy)))
 
 	http.HandleFunc("/catalog", withCORS(catalogProxy))
-	http.HandleFunc("/orders", withCORS(authenticate(ordersListProxy)))
-	http.HandleFunc("/orders/", withCORS(authenticate(orderStatusProxy)))
 
 	http.HandleFunc("/register", withCORS(authProxy))
 	http.HandleFunc("/login", withCORS(authProxy))

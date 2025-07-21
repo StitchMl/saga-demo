@@ -9,20 +9,23 @@ import {
     TextField,
     Button,
     Stack,
-    Alert
+    Alert,
+    Snackbar,
+    CircularProgress
 } from "@mui/material";
 import { Add, Delete } from "@mui/icons-material";
 import { useOrderApi } from "../api";
 import { useAuth } from "../context/AuthContext";
 
-export default function CreateItem() {
+export function CreateItem() {
     const { customerId } = useAuth();
     const { createOrder, flow } = useOrderApi();
-
     const [items, setItems] = useState([
         { id: Date.now(), productId: "", qty: 1 }
     ]);
     const [error, setError] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [snack, setSnack] = useState({ open: false, msg: "" });
 
     const addRow = () =>
         setItems((prev) => [
@@ -41,9 +44,10 @@ export default function CreateItem() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!customerId)
-            return setError("You must authenticate yourself before creating an order.");
+            return setError("È necessario autenticarsi prima di creare un ordine.");
 
         setError("");
+        setLoading(true);
         try {
             const order = {
                 customer_id: customerId,
@@ -54,9 +58,11 @@ export default function CreateItem() {
             };
             await createOrder(order);
             setItems([{ id: Date.now(), productId: "", qty: 1 }]);
-            alert(`Ordine (${flow}) creato!`);
+            setSnack({ open: true, msg: `Ordine (${flow}) creato con successo!` });
         } catch (err) {
-            setError(err.response?.data || err.message);
+            setError(err.response?.data?.message || err.response?.data || err.message);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -66,7 +72,7 @@ export default function CreateItem() {
                 <form onSubmit={handleSubmit}>
                     <CardContent>
                         <Typography variant="h5" gutterBottom>
-                            Ordine multi‑item ({flow})
+                            Ordine Multi-Articolo ({flow})
                         </Typography>
 
                         {items.map((it, idx) => (
@@ -77,7 +83,7 @@ export default function CreateItem() {
                                 sx={{ mb: 1, alignItems: "center" }}
                             >
                                 <TextField
-                                    label="Product ID"
+                                    label="ID Prodotto"
                                     value={it.productId}
                                     onChange={(e) =>
                                         handleChange(idx, "productId", e.target.value)
@@ -86,7 +92,7 @@ export default function CreateItem() {
                                     required
                                 />
                                 <TextField
-                                    label="Qty"
+                                    label="Qtà"
                                     type="number"
                                     inputProps={{ min: 1 }}
                                     value={it.qty}
@@ -95,7 +101,7 @@ export default function CreateItem() {
                                     required
                                 />
                                 <IconButton
-                                    aria-label="remove line"
+                                    aria-label="rimuovi riga"
                                     onClick={() => removeRow(it.id)}
                                     disabled={items.length === 1}
                                 >
@@ -111,22 +117,37 @@ export default function CreateItem() {
                         )}
                     </CardContent>
 
-                    <CardActions sx={{ justifyContent: "space-between" }}>
+                    <CardActions sx={{ justifyContent: "space-between", p: 2 }}>
                         <Button
                             startIcon={<Add />}
                             onClick={addRow}
                             variant="outlined"
                             type="button"
                         >
-                            Add row
+                            Aggiungi Articolo
                         </Button>
 
-                        <Button variant="contained" type="submit">
-                            Send Order
+                        <Button
+                            variant="contained"
+                            type="submit"
+                            disabled={loading}
+                            startIcon={loading ? <CircularProgress size={20} color="inherit" /> : null}
+                        >
+                            Invia Ordine
                         </Button>
                     </CardActions>
                 </form>
             </Card>
+            <Snackbar
+                open={snack.open}
+                autoHideDuration={4000}
+                onClose={() => setSnack({ open: false, msg: "" })}
+                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            >
+                <Alert severity="success" sx={{ width: "100%" }}>
+                    {snack.msg}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 }

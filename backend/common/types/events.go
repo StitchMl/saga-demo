@@ -9,13 +9,9 @@ const (
 	OrderCreatedEvent               EventType = "OrderCreated"
 	InventoryReservedEvent          EventType = "InventoryReserved"
 	InventoryReservationFailedEvent EventType = "InventoryReservationFailed"
-	OrderApprovedEvent              EventType = "OrderApproved"
-	OrderRejectedEvent              EventType = "OrderRejected"
+	PaymentProcessedEvent           EventType = "PaymentProcessed"
+	PaymentFailedEvent              EventType = "PaymentFailed"
 	RevertInventoryEvent            EventType = "RevertInventory"
-
-	UserRegisteredEvent EventType = "UserRegistered"
-	UserLoginEvent      EventType = "UserLogin"
-	ValidateEvent       EventType = "ValidateEvent"
 )
 
 // EventPayload is an interface to all event payloads, making their nature explicit.
@@ -41,12 +37,24 @@ type Order struct {
 	OrderID    string      `json:"order_id"`
 	Items      []OrderItem `json:"items"`
 	CustomerID string      `json:"customer_id"`
+	Total      float64     `json:"total,omitempty"`
 	Status     string      `json:"status"` // Pending, approved, rejected
+	Reason     string      `json:"reason,omitempty"`
+}
+
+// Product definisce la struttura di un prodotto.
+type Product struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description,omitempty"`
+	Price       float64 `json:"price"`
+	Available   int     `json:"available"`
+	ImageURL    string  `json:"image_url,omitempty"`
 }
 
 // --- Payload of Events ---
 
-// OrderCreatedPayload data for the OrderCreated event
+// OrderCreatedPayload dati per l'evento OrderCreated
 type OrderCreatedPayload struct {
 	OrderID    string      `json:"order_id"`
 	Items      []OrderItem `json:"items"`
@@ -56,51 +64,36 @@ type OrderCreatedPayload struct {
 // InventoryRequestPayload data for inventory request
 // Reuse OrderItem for a list of items.
 type InventoryRequestPayload struct {
-	OrderID string      `json:"order_id"`
-	Items   []OrderItem `json:"items"`
-	Reason  string      `json:"reason,omitempty"`
-}
-
-// InventoryReservedPayload data for InventoryReserved event
-type InventoryReservedPayload struct {
 	OrderID    string      `json:"order_id"`
-	CustomerID string      `json:"customer_id"`
 	Items      []OrderItem `json:"items"`
-	Success    bool        `json:"success"`
 	Reason     string      `json:"reason,omitempty"`
+	Amount     float64     `json:"amount,omitempty"`
+	CustomerID string      `json:"customer_id,omitempty"`
 }
 
-// InventoryReservationFailedPayload data for the InventoryReservationFailed event
-type InventoryReservationFailedPayload struct {
-	OrderID   string `json:"order_id"`
-	ProductID string `json:"product_id"`
-	Quantity  int    `json:"quantity"`
-	Reason    string `json:"reason"`
-}
-
-// PaymentPayload common data for PaymentProcessed and PaymentFailed
+// PaymentPayload dati comuni per PaymentProcessed e PaymentFailed
 type PaymentPayload struct {
 	OrderID    string  `json:"order_id"`
 	CustomerID string  `json:"customer_id,omitempty"`
 	Amount     float64 `json:"amount"`
-	Success    bool    `json:"success"`
 	Reason     string  `json:"reason,omitempty"`
 }
 
-// OrderStatusUpdatePayload Data for order status update events.
+// OrderStatusUpdatePayload Dati per gli eventi di aggiornamento dello stato dell'ordine.
 type OrderStatusUpdatePayload struct {
-	OrderID string `json:"order_id"`
-	Reason  string `json:"reason,omitempty"`
-	Success bool   `json:"success,omitempty"`
+	OrderID string  `json:"order_id"`
+	Total   float64 `json:"total,omitempty"`
+	Status  string  `json:"status"`
+	Reason  string  `json:"reason,omitempty"`
 }
 
-// GenericEvent wrapper for all event payloads
+// GenericEvent wrapper per tutti i payload degli eventi
 type GenericEvent struct {
 	BaseEvent
 	Payload EventPayload `json:"payload"`
 }
 
-// NewGenericEvent creates a new generic event with the base data and the specific payload.
+// NewGenericEvent crea un nuovo evento generico con i dati di base e il payload specifico.
 func NewGenericEvent(eventType EventType, orderID, details string, payload EventPayload) GenericEvent {
 	return GenericEvent{
 		BaseEvent: BaseEvent{

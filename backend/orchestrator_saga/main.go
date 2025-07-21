@@ -3,24 +3,44 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
-	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
 	events "github.com/StitchMl/saga-demo/common/types"
 )
+
+const (
+	contentTypeJSON      = "application/json"
+	contentType          = "Content-Type"
+	errorInvalidCustomer = "Invalid customer"
+)
+
+// ServiceError defines a custom error for service call failures.
+type ServiceError struct {
+	URL     string
+	Status  int
+	Message string
+}
+
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("service %s responded with status %d: %s", e.URL, e.Status, e.Message)
+}
 
 // Config Configuration of Services
 type Config struct {
 	OrderServiceURL     string `json:"order_service_url"`
 	InventoryServiceURL string `json:"inventory_service_url"`
 	PaymentServiceURL   string `json:"payment_service_url"`
+	AuthServiceURL      string `json:"auth_service_url"`
 	ServerPort          string `json:"server_port"`
+	ServiceCallTimeout  time.Duration
 }
 
 var appConfig Config
@@ -28,7 +48,7 @@ var appConfig Config
 type SagaEvent struct {
 	OrderID   string    `json:"order_id"`
 	Step      string    `json:"step"`
-	Status    string    `json:"status"` // Started, completed, failed, compensating, compensated
+	Status    string    `json:"status"`
 	Timestamp time.Time `json:"timestamp"`
 	Details   string    `json:"details,omitempty"`
 }
@@ -42,9 +62,6 @@ var sagaLog = struct {
 func main() {
 	// Load configuration
 	loadConfigFromEnv()
-
-	// Initializes the inventory and price database
-	inventorydb.InitDB()
 
 	// Endpoint to start a new order SAGA
 	http.HandleFunc("/create_order", createOrderHandler)
@@ -67,10 +84,23 @@ func loadConfigFromEnv() {
 	if appConfig.PaymentServiceURL == "" {
 		log.Fatal("Environment variable PaymentServiceURL not set.")
 	}
+	appConfig.AuthServiceURL = os.Getenv("AuthServiceURL")
+	if appConfig.AuthServiceURL == "" {
+		log.Fatal("Environment variable AuthServiceURL not set.")
+	}
 	appConfig.ServerPort = os.Getenv("ServerPort")
 	if appConfig.ServerPort == "" {
 		log.Fatal("ServerPort environment variable not set! Must be set to run the server.")
 	}
+	timeoutStr := os.Getenv("SERVICE_CALL_TIMEOUT_SECONDS")
+	if timeoutStr == "" {
+		timeoutStr = "10" // Default timeout
+	}
+	timeout, err := time.ParseDuration(timeoutStr + "s")
+	if err != nil {
+		log.Fatalf("Invalid SERVICE_CALL_TIMEOUT_SECONDS: %v", err)
+	}
+	appConfig.ServiceCallTimeout = timeout
 
 	log.Printf("Configuration loaded: %+v", appConfig)
 }
@@ -97,90 +127,135 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	// Initial log, adapted for the new items format
 	log.Printf("Request received: Order creation %s for Customer %s, Items: %+v", order.OrderID, order.CustomerID, order.Items)
 
-	// It starts the SAGA in a goroutine in order not to block the HTTP request.
-	go startSaga(order)
+	// It starts the SAGA synchronously to provide immediate feedback.
+	finalOrder, err := startSaga(order)
+	if err != nil {
+		// SAGA failed, respond with an error status, and the final order states.
+		w.Header().Set(contentType, contentTypeJSON)
+		w.WriteHeader(http.StatusConflict) // 409 Conflict is a good code for a business rule failure.
+		if err := json.NewEncoder(w).Encode(finalOrder); err != nil {
+			log.Printf("Error in the encoding of the JSON response: %v", err)
+		}
+		return
+	}
 
-	w.WriteHeader(http.StatusAccepted)
-	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Ordine ricevuto, SAGA avviata", "order_id": order.OrderID}); err != nil {
+	// SAGA succeeded
+	w.Header().Set(contentType, contentTypeJSON)
+	w.WriteHeader(http.StatusOK) // 200 OK for success
+	if err := json.NewEncoder(w).Encode(finalOrder); err != nil {
 		log.Printf("Error in the encoding of the JSON response: %v", err)
 	}
 }
 
 // Start the SAGA logic
-func startSaga(order events.Order) {
-	logSagaEvent(order.OrderID, "ORDER_CREATED", "started", "Order service received create order request.")
+func startSaga(order events.Order) (events.Order, error) {
+	logSagaEvent(order.OrderID, "SAGA_START", "started", "Saga started for order.")
 
-	// Calculates the total amount of the order based on actual prices.
-	totalAmount := 0.0
-	for i, item := range order.Items {
-		price, ok := inventorydb.GetProductPrice(item.ProductID)
-		if !ok {
-			log.Printf("Product price not found for Product %s in Order %s. Aborting SAGA.", item.ProductID, order.OrderID)
-			logSagaEvent(order.OrderID, "GET_PRICE", "failed", fmt.Sprintf("Product price not found for %s", item.ProductID))
-			compensateSaga(order.OrderID, order.Items, "price_lookup_failure") // Passa tutti gli item per la compensazione
-			return
-		}
-		// Assigns the price to the item in order for consistency
-		order.Items[i].Price = price
-		totalAmount += price * float64(item.Quantity)
+	// Step 1: Create Order in Order Service with “pending” status
+	logSagaEvent(order.OrderID, "CREATE_ORDER", "started", "Creating order in order service.")
+	resp, err := makeServiceCall(appConfig.OrderServiceURL+"/create_order", order)
+	if err != nil || resp["status"] != "success" {
+		log.Printf("Failed to create order %s in order service: %v, response: %+v", order.OrderID, err, resp)
+		logSagaEvent(order.OrderID, "CREATE_ORDER", "failed", "Failed to create order.")
+		order.Status = "failed"
+		order.Reason = "Failed to create order record"
+		return order, fmt.Errorf("failed to create order")
 	}
-	log.Printf("Calculated total amount for Order %s: %.2f", order.OrderID, totalAmount)
+	logSagaEvent(order.OrderID, "CREATE_ORDER", "completed", "Order created successfully in order service.")
 
-	// Step 1: Reserve Products in the Inventory
+	// Step 2: Validate Customer
+	logSagaEvent(order.OrderID, "VALIDATE_CUSTOMER", "started", "Validating customer.")
+	authReq := map[string]interface{}{"customer_id": order.CustomerID}
+	authResp, err := makeServiceCall(appConfig.AuthServiceURL+"/validate", authReq)
+	if err != nil {
+		log.Printf("Customer validation failed for order %s: %v", order.OrderID, err)
+		logSagaEvent(order.OrderID, "VALIDATE_CUSTOMER", "failed", "Customer validation failed.")
+		updateOrderStatus(order.OrderID, "rejected", errorInvalidCustomer, &order.Total)
+		order.Status = "rejected"
+		order.Reason = getCleanErrorMessage(err, "Customer validation failed")
+		return order, err
+	}
+	if valid, ok := authResp["valid"].(bool); !ok || !valid {
+		log.Printf("Customer validation returned not valid for order %s: response: %+v", order.OrderID, authResp)
+		logSagaEvent(order.OrderID, "VALIDATE_CUSTOMER", "failed", "Customer validation returned false.")
+		updateOrderStatus(order.OrderID, "rejected", errorInvalidCustomer, &order.Total)
+		order.Status = "rejected"
+		order.Reason = errorInvalidCustomer
+		return order, fmt.Errorf("customer validation returned false")
+	}
+	logSagaEvent(order.OrderID, "VALIDATE_CUSTOMER", "completed", "Customer validated successfully.")
+
+	// Step 3: Get product prices and calculate the total amount
+	logSagaEvent(order.OrderID, "GET_PRICES", "started", "Getting product prices from inventory service.")
+	totalAmount, err := getPricesAndCalculateTotal(order.Items)
+	if err != nil {
+		log.Printf("Failed to get prices for order %s: %v", order.OrderID, err)
+		logSagaEvent(order.OrderID, "GET_PRICES", "failed", fmt.Sprintf("Failed to get prices: %v", err))
+		compensateSaga(order.OrderID, order, "get_prices_failure")
+		order.Status = "rejected"
+		order.Reason = getCleanErrorMessage(err, "Failed to get prices")
+		return order, err
+	}
+	order.Total = totalAmount
+	log.Printf("Calculated total amount for Order %s: %.2f", order.OrderID, totalAmount)
+	logSagaEvent(order.OrderID, "GET_PRICES", "completed", "Prices obtained and total calculated.")
+
+	// Step 4: Reserve Products in the Inventory
 	logSagaEvent(order.OrderID, "RESERVE_INVENTORY", "started", "Attempting to reserve inventory.")
 	// Pass the entire list of items for the reserve
-	reserveReq := map[string]interface{}{
-		"order_id": order.OrderID,
-		"items":    order.Items, // Pass all items with quantity and price
+	reserveReq := events.InventoryRequestPayload{
+		OrderID: order.OrderID,
+		Items:   order.Items,
 	}
-	resp, err := makeServiceCall(appConfig.InventoryServiceURL+"/reserve", reserveReq)
+	resp, err = makeServiceCall(appConfig.InventoryServiceURL+"/reserve", reserveReq)
 	if err != nil || resp["status"] != "success" {
 		log.Printf("Inventory reserve failure for order %s: %v, response: %+v", order.OrderID, err, resp)
 		logSagaEvent(order.OrderID, "RESERVE_INVENTORY", "failed", fmt.Sprintf("Inventory reservation failed: %v", err))
-		compensateSaga(order.OrderID, order.Items, "inventory_failure") // Passes all items for compensation
-		return
+		compensateSaga(order.OrderID, order, "inventory_failure")
+		order.Status = "rejected"
+		order.Reason = getCleanErrorMessage(err, "Inventory reservation failed")
+		return order, err
 	}
 	log.Printf("Successfully reserved inventory for order %s", order.OrderID)
 	logSagaEvent(order.OrderID, "RESERVE_INVENTORY", "completed", "Inventory reserved successfully.")
 
-	// Step 2: Process Payment
+	// Step 5: Process Payment
 	logSagaEvent(order.OrderID, "PROCESS_PAYMENT", "started", "Attempting to process payment.")
-	paymentReq := map[string]interface{}{
-		"order_id":    order.OrderID,
-		"customer_id": order.CustomerID,
-		"amount":      totalAmount,
+	paymentReq := events.PaymentPayload{
+		OrderID:    order.OrderID,
+		CustomerID: order.CustomerID,
+		Amount:     totalAmount,
 	}
 	resp, err = makeServiceCall(appConfig.PaymentServiceURL+"/process", paymentReq)
 	if err != nil || resp["status"] != "success" {
 		log.Printf("Failure to process payment for order %s: %v, response: %+v", order.OrderID, err, resp)
 		logSagaEvent(order.OrderID, "PROCESS_PAYMENT", "failed", fmt.Sprintf("Payment processing failed: %v", err))
-		compensateSaga(order.OrderID, order.Items, "payment_failure") // Passa tutti gli item per la compensazione
-		return
+		compensateSaga(order.OrderID, order, "payment_failure")
+		order.Status = "rejected"
+		order.Reason = getCleanErrorMessage(err, "Payment processing failed")
+		return order, err
 	}
 	log.Printf("Payment successfully processed for order %s", order.OrderID)
 	logSagaEvent(order.OrderID, "PROCESS_PAYMENT", "completed", "Payment processed successfully.")
 
-	// Step 3: Order Confirmation
+	// Step 6: Order Confirmation
 	logSagaEvent(order.OrderID, "CONFIRM_ORDER", "started", "Attempting to confirm order.")
-	// The confirmation request should use events.Order or a derivation thereof for consistency.
-	confirmReq := map[string]interface{}{
-		"order_id":    order.OrderID,
-		"status":      "approved",
-		"items":       order.Items,
-		"customer_id": order.CustomerID,
-	}
-	resp, err = makeServiceCall(appConfig.OrderServiceURL+"/confirm", confirmReq)
-	if err != nil || resp["status"] != "success" {
-		log.Printf("Order confirmation failure for order %s: %v, response: %+v", order.OrderID, err, resp)
-		logSagaEvent(order.OrderID, "CONFIRM_ORDER", "failed", fmt.Sprintf("Order confirmation failed: %v", err))
-		return
+	if !updateOrderStatus(order.OrderID, "approved", "Saga completed successfully", &order.Total) {
+		log.Printf("Order confirmation failure for order %s", order.OrderID)
+		logSagaEvent(order.OrderID, "CONFIRM_ORDER", "failed", "Order confirmation failed, requires manual intervention.")
+		order.Status = "failed_confirmation"
+		order.Reason = "Order confirmation failed, requires manual intervention."
+		return order, fmt.Errorf("order confirmation failed")
 	}
 	log.Printf("Order %s successfully completed!", order.OrderID)
 	logSagaEvent(order.OrderID, "SAGA_COMPLETE", "completed", "Order saga completed successfully.")
+	order.Status = "approved"
+	order.Reason = "Saga completed successfully"
+	return order, nil
 }
 
-// The compensateSaga function now receives a slice of types.OrderItem
-func compensateSaga(orderID string, items []events.OrderItem, reason string) {
+// The compensateSaga function now receives the full order object
+func compensateSaga(orderID string, order events.Order, reason string) {
 	log.Printf("Start of compensation for order %s due to: %s", orderID, reason)
 	logSagaEvent(orderID, "SAGA_COMPENSATION", "started", fmt.Sprintf("Compensation initiated due to %s", reason))
 
@@ -197,27 +272,62 @@ func compensateSaga(orderID string, items []events.OrderItem, reason string) {
 				revertPayment(orderID, reason)
 			case "RESERVE_INVENTORY":
 				// Pass the entire list of items to inventory clearing
-				cancelInventoryReservation(orderID, items, reason)
+				cancelInventoryReservation(orderID, order.Items, reason)
+			case "CREATE_ORDER":
+				updateOrderStatus(orderID, "rejected", reason, &order.Total)
 			}
 		}
 	}
-	// Updates the final status of the order to 'rejected' in the Order service.
-	logSagaEvent(orderID, "UPDATE_ORDER_STATUS_REJECTED", "started", "Updating order status to rejected.")
-	updateReq := map[string]interface{}{
-		"order_id": orderID,
-		"status":   "rejected",
-	}
-	_, err := makeServiceCall(appConfig.OrderServiceURL+"/confirm", updateReq)
-	if err != nil {
-		log.Printf("Error updating order status %s to rejected: %v", orderID, err)
-		logSagaEvent(orderID, "UPDATE_ORDER_STATUS_REJECTED", "failed", fmt.Sprintf("Failed to update order status to rejected: %v", err))
-	} else {
-		log.Printf("Order status %s updated to rejected.", orderID)
-		logSagaEvent(orderID, "UPDATE_ORDER_STATUS_REJECTED", "completed", "Order status updated to rejected.")
-	}
-
 	log.Printf("SAGA compensation for order %s completed.", orderID)
 	logSagaEvent(orderID, "SAGA_COMPENSATION", "completed", "Saga compensation completed.")
+}
+
+// getPricesAndCalculateTotal fetches prices from the inventory service and calculates the total.
+func getPricesAndCalculateTotal(items []events.OrderItem) (float64, error) {
+	var totalAmount float64
+	for i, item := range items {
+		priceReq := map[string]string{"product_id": item.ProductID}
+		resp, err := makeServiceCall(appConfig.InventoryServiceURL+"/get_price", priceReq)
+		if err != nil {
+			return 0, fmt.Errorf("could not get price for product %s: %w", item.ProductID, err)
+		}
+		priceStr, ok := resp["price"].(string)
+		if !ok {
+			return 0, fmt.Errorf("price for product %s is not a string: %+v", item.ProductID, resp)
+		}
+		price, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil {
+			return 0, fmt.Errorf("could not parse price for product %s from response: %+v", item.ProductID, resp)
+		}
+		items[i].Price = price
+		if items[i].Price <= 0 {
+			return 0, fmt.Errorf("product %s has an invalid price: %.2f", item.ProductID, items[i].Price)
+		}
+		totalAmount += items[i].Price * float64(item.Quantity)
+	}
+	return totalAmount, nil
+}
+
+// Helper function to update order status
+func updateOrderStatus(orderID, status, reason string, total *float64) bool {
+	logSagaEvent(orderID, "UPDATE_ORDER_STATUS", "started", fmt.Sprintf("Updating order status to %s", status))
+	updateReq := events.OrderStatusUpdatePayload{
+		OrderID: orderID,
+		Status:  status,
+		Reason:  reason,
+	}
+	if total != nil {
+		updateReq.Total = *total
+	}
+	resp, err := makeServiceCall(appConfig.OrderServiceURL+"/update_status", updateReq)
+	if err != nil || resp["status"] != "success" {
+		log.Printf("Error updating order status for %s: %v, response: %+v", orderID, err, resp)
+		logSagaEvent(orderID, "UPDATE_ORDER_STATUS", "failed", fmt.Sprintf("Failed to update order status: %v", err))
+		return false
+	}
+	log.Printf("Order status for %s updated to %s.", orderID, status)
+	logSagaEvent(orderID, "UPDATE_ORDER_STATUS", "completed", fmt.Sprintf("Order status updated to %s", status))
+	return true
 }
 
 // Helper function to offset payment
@@ -240,10 +350,10 @@ func revertPayment(orderID string, reason string) {
 // Helper function to cancel inventory reservation
 func cancelInventoryReservation(orderID string, items []events.OrderItem, reason string) {
 	logSagaEvent(orderID, "CANCEL_RESERVATION", "compensating", "Attempting to cancel inventory reservation.")
-	cancelReq := map[string]interface{}{
-		"order_id": orderID,
-		"items":    items,
-		"reason":   reason,
+	cancelReq := events.InventoryRequestPayload{
+		OrderID: orderID,
+		Items:   items,
+		Reason:  reason,
 	}
 	resp, err := makeServiceCall(appConfig.InventoryServiceURL+"/cancel_reservation", cancelReq)
 	if err != nil || resp["status"] != "success" {
@@ -256,7 +366,7 @@ func cancelInventoryReservation(orderID string, items []events.OrderItem, reason
 }
 
 // Function for making HTTP calls to services
-func makeServiceCall(url string, payload map[string]interface{}) (map[string]string, error) {
+func makeServiceCall(url string, payload interface{}) (map[string]interface{}, error) {
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("payload marshalling error: %w", err)
@@ -266,9 +376,9 @@ func makeServiceCall(url string, payload map[string]interface{}) (map[string]str
 	if err != nil {
 		return nil, fmt.Errorf("error when creating HTTP request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(contentType, contentTypeJSON)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: appConfig.ServiceCallTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error in request to service %s: %w", url, err)
@@ -284,7 +394,17 @@ func makeServiceCall(url string, payload map[string]interface{}) (map[string]str
 		return nil, fmt.Errorf("error in reading the answer: %w", err)
 	}
 
-	var result map[string]string
+	if resp.StatusCode >= 400 {
+		var errorResult map[string]interface{}
+		_ = json.Unmarshal(body, &errorResult)
+		errorMessage, _ := errorResult["message"].(string)
+		if errorMessage == "" {
+			errorMessage = string(body)
+		}
+		return nil, &ServiceError{URL: url, Status: resp.StatusCode, Message: errorMessage}
+	}
+
+	var result map[string]interface{}
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		// Log the raw body if JSON unmarshalling fails to aid debugging
@@ -314,4 +434,16 @@ func logSagaEvent(orderID, step, status, details string) {
 	sagaLog.Unlock()
 
 	log.Printf("[SAGA Event] Order: %s, Step: %s, Status: %s, Details: %s", orderID, step, status, details)
+}
+
+// getCleanErrorMessage extracts a user-friendly message from a ServiceError.
+func getCleanErrorMessage(err error, defaultMessage string) string {
+	var serviceErr *ServiceError
+	if errors.As(err, &serviceErr) {
+		return serviceErr.Message
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return defaultMessage
 }

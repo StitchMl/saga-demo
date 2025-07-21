@@ -3,8 +3,6 @@ FROM golang:1.23.0-alpine AS builder
 
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
-RUN apk add --no-cache git
-RUN go mod tidy
 RUN go mod download
 COPY backend /app/backend
 
@@ -15,7 +13,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/order-service .
 FROM alpine:3.19
 
 WORKDIR /root/
-RUN apk add --no-cache net-tools
 COPY --from=builder /usr/local/bin/order-service .
 EXPOSE 8080
 CMD ["./order-service"]

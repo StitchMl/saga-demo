@@ -13,13 +13,9 @@ var DB = struct {
 		sync.RWMutex
 		Data map[string]events.Order
 	}
-	Inventory struct {
+	Products struct {
 		sync.RWMutex
-		Data map[string]int
-	}
-	Prices struct {
-		sync.RWMutex
-		Data map[string]float64
+		Data map[string]events.Product
 	}
 	Users struct {
 		sync.RWMutex
@@ -29,60 +25,37 @@ var DB = struct {
 
 // InitDB initializes the inventory database and price database.
 func InitDB() {
-	DB.Orders.Lock()
-	DB.Inventory.Lock()
-	DB.Prices.Lock()
-	DB.Users.Lock()
-	defer DB.Orders.Unlock()
-	defer DB.Inventory.Unlock()
-	defer DB.Prices.Unlock()
-	defer DB.Users.Unlock()
-
 	DB.Orders.Data = make(map[string]events.Order)
-	DB.Inventory.Data = map[string]int{
-		"prod-1": 100,
-		"prod-2": 75,
-		"prod-3": 42,
-	}
-	DB.Prices.Data = map[string]float64{
-		"prod-1": 19.90,
-		"prod-2": 34.50,
-		"prod-3": 12.00,
-	}
-	DB.Users.Data = []events.User{
-		{
-			ID:           "user-1",
-			Name:         "Mario Rossi",
-			Email:        "mario.rossi@example.com",
-			Username:     "mario.rossi",
-			PasswordHash: func() string { h, _ := events.HashPassword("password1"); return h }(),
-		},
-		{
-			ID:           "user-2",
-			Name:         "Luca Bianchi",
-			Email:        "luca.bianchi@example.com",
-			Username:     "luca.bianchi",
-			PasswordHash: func() string { h, _ := events.HashPassword("password2"); return h }(),
-		},
+	DB.Products.Data = map[string]events.Product{
+		"prod-1": {ID: "prod-1", Name: "Laptop Pro", Description: "Un laptop potente per professionisti.", Price: 1299.99, Available: 100, ImageURL: "https://m.media-amazon.com/images/I/61UcV2bDnoL._AC_SL1500_.jpg"},
+		"prod-2": {ID: "prod-2", Name: "Mouse Wireless", Description: "Mouse ergonomico e preciso.", Price: 49.50, Available: 50, ImageURL: "https://m.media-amazon.com/images/I/711bP+FjSQL._AC_SL1500_.jpg"},
+		"prod-3": {ID: "prod-3", Name: "Tastiera Meccanica", Description: "Tastiera con switch meccanici per gaming.", Price: 120.00, Available: 200, ImageURL: "https://m.media-amazon.com/images/I/71kq6u7NA4L._AC_SL1500_.jpg"},
 	}
 
-	log.Println("[DataStore] Global data store initialized.")
-	log.Println("[DataStore] Initial Inventory:", DB.Inventory.Data)
-	log.Println("[DataStore] Initial Prices:", DB.Prices.Data)
+	u1hash, _ := events.HashPassword("pass1")
+	u2hash, _ := events.HashPassword("pass2")
+	DB.Users.Data = []events.User{
+		{ID: "custom-1", Username: "user1", PasswordHash: u1hash},
+		{ID: "custom-2", Username: "user2", PasswordHash: u2hash},
+	}
+	log.Println("[DataStore] In-memory database initialized with sample data.")
 }
 
 // GetProductPrice retrieves the price of a product.
 func GetProductPrice(productID string) (float64, bool) {
-	DB.Prices.RLock()
-	defer DB.Prices.RUnlock()
-	price, ok := DB.Prices.Data[productID]
-	return price, ok
+	DB.Products.RLock()
+	defer DB.Products.RUnlock()
+	product, ok := DB.Products.Data[productID]
+	if !ok {
+		return 0, false
+	}
+	return product.Price, true
 }
 
 // GetOrder returns an order by ID if it exists.
 func GetOrder(orderID string) (events.Order, bool) {
 	DB.Orders.RLock()
 	defer DB.Orders.RUnlock()
-	o, ok := DB.Orders.Data[orderID]
-	return o, ok
+	order, ok := DB.Orders.Data[orderID]
+	return order, ok
 }

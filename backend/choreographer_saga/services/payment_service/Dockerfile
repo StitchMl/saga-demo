@@ -3,8 +3,6 @@ FROM golang:1.23.0-alpine AS builder
 
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
-RUN apk add --no-cache git
-RUN go mod tidy
 RUN go mod download
 COPY backend /app/backend
 

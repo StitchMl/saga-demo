@@ -32,13 +32,10 @@ export default function NavBar() {
                         Catalog
                     </Button>
                     <Button component={Link} to="/create" color="inherit">
-                        New order
-                    </Button>
-                    <Button component={Link} to="/create-items" color="inherit">
-                        Multi-item order
+                        New Order
                     </Button>
                     <Button component={Link} to="/status" color="inherit">
-                        Orders
+                        Order Status
                     </Button>
                 </Box>
 
@@ -49,8 +46,8 @@ export default function NavBar() {
                     onChange={(_, v) => v && setFlow(v)}
                     sx={{ "& .MuiToggleButton-root": { textTransform: "none", px: 1.5 } }}
                 >
-                    <ToggleButton value="choreographed">Coreografata</ToggleButton>
-                    <ToggleButton value="orchestrated">Orchestrata</ToggleButton>
+                    <ToggleButton value="choreographed">Coreografia</ToggleButton>
+                    <ToggleButton value="orchestrated">Orchestrazione</ToggleButton>
                 </ToggleButtonGroup>
 
                 <Box sx={{ ml: 3 }}>
@@ -60,7 +57,7 @@ export default function NavBar() {
                         </Button>
                     ) : (
                         <Button component={Link} to="/login" color="inherit">
-                            Login / Register
+                            Login / Registrati
                         </Button>
                     )}
                 </Box>

@@ -17,11 +17,12 @@ services:
 
   # --- CHOREOGRAPHER SAGA SERVICES ---
   choreographer-order-service:
-    build: {context: ., dockerfile: backend/orchestrator_saga/services/order_service/Dockerfile}
+    build: {context: ., dockerfile: backend/choreographer_saga/services/order_service/Dockerfile}
     environment:
       ORDER_SERVICE_PORT: 8081
+      PAYMENT_AMOUNT_LIMIT: 2000.00
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      INVENTORY_SERVICE_URL: http://choreographer-inventory-service:8082
+      RABBITMQ_PUBLISH_TIMEOUT_SECONDS: 5
     depends_on: {rabbitmq: {condition: service_healthy}}
 
   choreographer-inventory-service:
@@ -29,6 +30,7 @@ services:
     environment:
       INVENTORY_SERVICE_PORT: 8082
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_PUBLISH_TIMEOUT_SECONDS: 5
     depends_on: {rabbitmq: {condition: service_healthy}}
 
   choreographer-payment-service:
@@ -36,20 +38,21 @@ services:
     environment:
       PAYMENT_SERVICE_PORT: 8083
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_PUBLISH_TIMEOUT_SECONDS: 5
+      PAYMENT_AMOUNT_LIMIT: 2000.00
     depends_on: { rabbitmq: { condition: service_healthy } }
 
   choreographer-auth-service:
     build: {context: ., dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile}
     environment:
       AUTH_SERVICE_PORT: 8084
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-    depends_on: { rabbitmq: { condition: service_healthy } }
 
   # --- ORCHESTRATOR SAGA SERVICES ---
   orchestrator-order-service:
     build: {context: ., dockerfile: backend/orchestrator_saga/services/order_service/Dockerfile}
     environment:
       ORDER_SERVICE_PORT: 8081
+      PAYMENT_AMOUNT_LIMIT: 2000.00
 
   orchestrator-inventory-service:
     build: {context: ., dockerfile: backend/orchestrator_saga/services/inventory_service/Dockerfile}
@@ -60,9 +63,10 @@ services:
     build: {context: ., dockerfile: backend/orchestrator_saga/services/payment_service/Dockerfile}
     environment:
       PAYMENT_SERVICE_PORT: 8083
+      PAYMENT_AMOUNT_LIMIT: 2000.00
 
   orchestrator-auth-service:
-    build: {context: ., dockerfile: backend/choreographer_saga/services/auth_service/Dockerfile}
+    build: {context: ., dockerfile: backend/orchestrator_saga/services/auth_service/Dockerfile}
     environment:
       AUTH_SERVICE_PORT: 8084
 
@@ -74,6 +78,8 @@ services:
       OrderServiceURL: http://orchestrator-order-service:8081
       InventoryServiceURL: http://orchestrator-inventory-service:8082
       PaymentServiceURL: http://orchestrator-payment-service:8083
+      AuthServiceURL: http://orchestrator-auth-service:8084
+      SERVICE_CALL_TIMEOUT_SECONDS: 10
 
   # ---------- GATEWAY and FRONTEND (always active) ----------
   # --- API Gateway ---
@@ -86,13 +92,17 @@ services:
       ORCHESTRATOR_INVENTORY_BASE_URL:  http://orchestrator-inventory-service:8082
       CHOREOGRAPHER_ORDER_BASE_URL:     http://choreographer-order-service:8081
       ORCHESTRATOR_ORDER_BASE_URL:      http://orchestrator-order-service:8081
-      CHOREOGRAPHER_ORDER_SERVICE_URL:  http://choreographer-order-service:8081/create_order
-      ORCHESTRATOR_MAIN_SERVICE_URL:    http://orchestrator:8080/create_order
+      ORCHESTRATOR_SERVICE_URL:         http://orchestrator:8080
       CHOREOGRAPHER_AUTH_BASE_URL:      http://choreographer-auth-service:8084
       ORCHESTRATOR_AUTH_BASE_URL:       http://orchestrator-auth-service:8084
     depends_on:
       - choreographer-inventory-service
       - orchestrator-inventory-service
+      - choreographer-order-service
+      - orchestrator-order-service
+      - orchestrator
+      - choreographer-auth-service
+      - orchestrator-auth-service
 
   # --- Frontend Service ---
   frontend:
@@ -101,8 +111,9 @@ services:
     volumes: [ "./frontend:/app" ]
     ports: [ "8090:3000" ]
     environment:
-      - REACT_APP_API_BASE_URL=http://localhost:8000
+      - REACT_APP_API_BASE_URL=http://localhost:${GATEWAY_PORT:-8000}
       - CHOKIDAR_USEPOLLING=true
+      - NODE_OPTIONS=--no-deprecation
     command: sh -c "npm install && npm start"
     depends_on: { api-gateway: { condition: service_started } }
 

@@ -2,21 +2,25 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/StitchMl/saga-demo/common/payment_gateway"
+	events "github.com/StitchMl/saga-demo/common/types"
 )
 
 const (
-	errorEncode     = "Failed to encode response"
 	errorBody       = "Invalid request body"
 	errorMethod     = "Method not allowed"
 	contentTypeJSON = "application/json"
 	contentType     = "Content-Type"
 )
+
+var paymentAmountLimit float64
 
 // In-memory database for payment transactions (local record of the Payment Service)
 var transactionsDB = struct {
@@ -27,8 +31,19 @@ var transactionsDB = struct {
 func main() {
 	port := os.Getenv("PAYMENT_SERVICE_PORT")
 	if port == "" {
-		log.Printf("PAYMENT_SERVICE_PORT not set! Must be set to run the service.")
+		log.Fatal("PAYMENT_SERVICE_PORT environment variable not set.")
 	}
+
+	limitStr := os.Getenv("PAYMENT_AMOUNT_LIMIT")
+	if limitStr == "" {
+		log.Fatal("PAYMENT_AMOUNT_LIMIT not set")
+	}
+	var err error
+	paymentAmountLimit, err = strconv.ParseFloat(limitStr, 64)
+	if err != nil {
+		log.Fatalf("Invalid PAYMENT_AMOUNT_LIMIT: %v", err)
+	}
+
 	http.HandleFunc("/process", processPaymentHandler)
 	http.HandleFunc("/revert", revertPaymentHandler)
 	log.Printf("Payment Service started on the port %s", port)
@@ -42,11 +57,7 @@ func processPaymentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		OrderID    string  `json:"order_id"`
-		CustomerID string  `json:"customer_id"`
-		Amount     float64 `json:"amount"`
-	}
+	var req events.PaymentPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// rispondi SEMPRE in JSON: l’Orchestrator si aspetta JSON
 		w.Header().Set(contentType, contentTypeJSON)
@@ -58,21 +69,38 @@ func processPaymentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transactionsDB.Lock()
-	transactionsDB.Data[req.OrderID] = "pending"
-	transactionsDB.Unlock()
-
-	status, err := payment_gateway.ProcessPayment(req.OrderID, req.CustomerID, req.Amount)
-
-	transactionsDB.Lock()
-	defer transactionsDB.Unlock()
-	if err != nil || status != "success" {
-		transactionsDB.Data[req.OrderID] = "failed"
+	// Check payment limit
+	if req.Amount > paymentAmountLimit {
 		w.Header().Set(contentType, contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",
-			"message": errorEncode,
+			"message": fmt.Sprintf("Payment processing failed: amount %.2f exceeds limit", req.Amount),
+		})
+		return
+	}
+
+	transactionsDB.Lock()
+	transactionsDB.Data[req.OrderID] = "pending"
+	transactionsDB.Unlock()
+
+	err := payment_gateway.ProcessPayment(req.OrderID, req.CustomerID, req.Amount)
+
+	transactionsDB.Lock()
+	defer transactionsDB.Unlock()
+	if err != nil {
+		transactionsDB.Data[req.OrderID] = "failed"
+		w.Header().Set(contentType, contentTypeJSON)
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"message": "Payment processing failed" + func() string {
+				if err != nil {
+					return ": " + err.Error()
+				} else {
+					return ""
+				}
+			}(),
 		})
 		return
 	}
@@ -90,9 +118,8 @@ func revertPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		OrderID    string  `json:"order_id"`
-		CustomerID string  `json:"customer_id"`
-		Amount     float64 `json:"amount"`
+		OrderID string `json:"order_id"`
+		Reason  string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set(contentType, contentTypeJSON)
@@ -108,17 +135,22 @@ func revertPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	defer transactionsDB.Unlock()
 
 	if transactionsDB.Data[req.OrderID] != "processed" {
-		http.Error(w, "Payment not being processed locally or already cancelled", http.StatusBadRequest)
+		// Se il pagamento non è stato processato, consideriamo la compensazione un successo.
+		log.Printf("Payment for order %s was not processed, no need to revert.", req.OrderID)
+		w.Header().Set(contentType, contentTypeJSON)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Payment not processed, no action taken"})
 		return
 	}
 
-	gatewayStatus, gatewayErr := payment_gateway.RevertPayment(req.OrderID, "Reverting payment for order "+req.OrderID)
-	if gatewayErr != nil || gatewayStatus != "success" {
+	gatewayErr := payment_gateway.RevertPayment(req.OrderID, req.Reason)
+	if gatewayErr != nil {
+		log.Printf("Payment reversal failed at gateway for order %s: %v", req.OrderID, gatewayErr)
 		http.Error(w, "Payment reversal failed at gateway", http.StatusInternalServerError)
 		return
 	}
 
 	transactionsDB.Data[req.OrderID] = "reverted"
+	log.Printf("Reverted payment for order %s", req.OrderID)
 	w.Header().Set(contentType, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Payment cancelled"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Payment reverted"})
 }

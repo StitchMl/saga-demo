@@ -2,18 +2,49 @@ package main
 
 import (
 	"encoding/json"
-	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
-	events "github.com/StitchMl/saga-demo/common/types"
-	"github.com/google/uuid"
 	"log"
 	"net/http"
 	"os"
+	"sync"
+
+	events "github.com/StitchMl/saga-demo/common/types"
+	"github.com/google/uuid"
 )
 
 const (
 	errorInvalidInput     = "invalid input"
 	errorMethodNotAllowed = "method not allowed"
+	ContentTypeJSON       = "application/json"
+	ContentType           = "Content-Type"
 )
+
+// UsersDB is an in-memory database for the auth service.
+var UsersDB = struct {
+	sync.RWMutex
+	Data []events.User
+}{}
+
+func initDB() {
+	UsersDB.Lock()
+	defer UsersDB.Unlock()
+	UsersDB.Data = []events.User{
+		{
+			ID:           "user-1",
+			Name:         "Mario Rossi",
+			Email:        "mario.rossi@example.com",
+			Username:     "mario.rossi",
+			PasswordHash: func() string { h, _ := events.HashPassword("password123"); return h }(),
+		},
+		{
+			ID:           "user-2",
+			Name:         "Luca Bianchi",
+			Email:        "luca.bianchi@example.com",
+			Username:     "luca.bianchi",
+			PasswordHash: func() string { h, _ := events.HashPassword("password456"); return h }(),
+		},
+	}
+	log.Println("[AuthService] In-memory user database initialized.")
+}
 
 // ---------------- REGISTER -----------------
 func registerHandler(w http.ResponseWriter, r *http.Request) {
@@ -26,25 +57,26 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errorInvalidInput, http.StatusBadRequest)
 		return
 	}
-	hash, _ := events.HashPassword(u.PasswordHash)
+	hash, _ := events.HashPassword(u.Password)
 	u.PasswordHash = hash
+	u.Password = "" // Rimuovi la password in chiaro
 
 	if u.ID == "" {
 		u.ID = uuid.NewString()
 	}
 
-	inventorydb.DB.Users.Lock()
-	for _, usr := range inventorydb.DB.Users.Data {
+	UsersDB.Lock()
+	for _, usr := range UsersDB.Data {
 		if usr.Username == u.Username {
-			inventorydb.DB.Users.Unlock()
+			UsersDB.Unlock()
 			http.Error(w, "user exists", http.StatusConflict)
 			return
 		}
 	}
-	inventorydb.DB.Users.Data = append(inventorydb.DB.Users.Data, u)
-	inventorydb.DB.Users.Unlock()
+	UsersDB.Data = append(UsersDB.Data, u)
+	UsersDB.Unlock()
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(ContentType, ContentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"customer_id": u.ID,
@@ -66,13 +98,15 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inventorydb.DB.Users.RLock()
-	defer inventorydb.DB.Users.RUnlock()
-	for _, user := range inventorydb.DB.Users.Data {
+	UsersDB.RLock()
+	defer UsersDB.RUnlock()
+	for _, user := range UsersDB.Data {
 		if user.Username == req.Username &&
 			events.CheckPassword(user.PasswordHash, req.Password) == nil {
+			w.Header().Set(ContentType, ContentTypeJSON)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"customer_id": user.ID,
+				"status":      "success",
 			})
 			return
 		}
@@ -87,34 +121,37 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req events.AuthRequest
+	var req events.AuthResponse
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	inventorydb.DB.Users.RLock()
-	defer inventorydb.DB.Users.RUnlock()
+	UsersDB.RLock()
+	defer UsersDB.RUnlock()
 
 	valid := false
-	for _, user := range inventorydb.DB.Users.Data {
+	for _, user := range UsersDB.Data {
 		if user.ID == req.CustomerID {
 			valid = true
 			break
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(ContentType, ContentTypeJSON)
 	if valid {
-		_ = json.NewEncoder(w).Encode(events.AuthResponse{
-			CustomerID: req.CustomerID,
-			Valid:      true,
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"customer_id": req.CustomerID,
+			"valid":       true,
+			"status":      "success",
 		})
 	} else {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(events.AuthResponse{
-			CustomerID: req.CustomerID,
-			Valid:      false,
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"customer_id": req.CustomerID,
+			"valid":       false,
+			"status":      "error",
+			"message":     "Invalid customer ID",
 		})
 	}
 }
@@ -126,6 +163,8 @@ func main() {
 	if port == "" {
 		log.Fatal("AUTH_SERVICE_PORT non impostata")
 	}
+
+	initDB()
 
 	http.HandleFunc("/register", registerHandler)
 	http.HandleFunc("/login", loginHandler)

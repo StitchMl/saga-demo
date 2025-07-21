@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	events "github.com/StitchMl/saga-demo/common/types"
@@ -12,14 +14,15 @@ import (
 )
 
 // EventHandler is a type of function that handles events.
-type EventHandler func(event interface{})
+type EventHandler func(event events.GenericEvent)
 
 // EventBus is an event bus based on RabbitMQ.
 type EventBus struct {
-	conn        *amqp.Connection
-	channel     *amqp.Channel
-	exchange    string
-	subscribers map[events.EventType][]EventHandler
+	conn           *amqp.Connection
+	channel        *amqp.Channel
+	exchange       string
+	subscribers    map[events.EventType][]EventHandler
+	publishTimeout time.Duration
 }
 
 // NewEventBus creates a new instance of EventBus and connects to RabbitMQ.
@@ -41,13 +44,24 @@ func NewEventBus(rabbitMQURL string) (*EventBus, error) {
 		return nil, fmt.Errorf("exchange statement failed: %w", err)
 	}
 
+	timeoutStr := os.Getenv("RABBITMQ_PUBLISH_TIMEOUT_SECONDS")
+	if timeoutStr == "" {
+		timeoutStr = "5" // Default timeout
+	}
+	timeout, err := strconv.Atoi(timeoutStr)
+	if err != nil {
+		log.Printf("[EventBus] Invalid timeout value, using default 5s")
+		timeout = 5
+	}
+
 	log.Printf("[EventBus] Connected to RabbitMQ %s. Exchange '%s' declared.", rabbitMQURL, exchangeName)
 
 	return &EventBus{
-		conn:        conn,
-		channel:     channel,
-		exchange:    exchangeName,
-		subscribers: make(map[events.EventType][]EventHandler),
+		conn:           conn,
+		channel:        channel,
+		exchange:       exchangeName,
+		subscribers:    make(map[events.EventType][]EventHandler),
+		publishTimeout: time.Duration(timeout) * time.Second,
 	}, nil
 }
 
@@ -71,7 +85,7 @@ func (eb *EventBus) Publish(event events.GenericEvent) error {
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eb.publishTimeout)
 	defer cancel()
 	if err := eb.channel.PublishWithContext(
 		ctx,
@@ -105,9 +119,11 @@ func (eb *EventBus) Subscribe(eventType events.EventType, handler EventHandler) 
 	go func() {
 		for d := range messages {
 			var e events.GenericEvent
-			if json.Unmarshal(d.Body, &e) == nil && e.Type == eventType {
-				handler(e)
+			if err := json.Unmarshal(d.Body, &e); err != nil {
+				log.Printf("[EventBus] Failed to unmarshal event body: %v. Body: %s", err, string(d.Body))
+				continue
 			}
+			handler(e)
 		}
 	}()
 	return nil

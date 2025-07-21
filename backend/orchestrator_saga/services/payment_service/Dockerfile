@@ -3,8 +3,6 @@ FROM golang:1.23.0-alpine AS builder
 
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
-RUN apk add --no-cache git
-RUN go mod tidy
 RUN go mod download
 COPY backend /app/backend
 
@@ -14,6 +12,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/payment-service .
 # --- SECOND STAGE: Light final image ---
 FROM alpine:3.19
 
-WORKDIR /root/
+RUN adduser -D appuser
+USER appuser
+
+WORKDIR /home/appuser
 COPY --from=builder /usr/local/bin/payment-service .
 CMD ["./payment-service"]

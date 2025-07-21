@@ -3,9 +3,6 @@ FROM golang:1.23.0-alpine AS builder
 
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
-RUN apk add --no-cache git
-RUN go mod tidy
-RUN go get golang.org/x/crypto/bcrypt
 RUN go mod download
 
 COPY backend/gateway /app/gateway
@@ -17,7 +14,7 @@ FROM alpine:3.19
 RUN adduser -D appuser
 USER appuser
 
-WORKDIR /app
-COPY --from=builder /api-gateway ./api-gateway
+WORKDIR /home/appuser
+COPY --from=builder /api-gateway .
 EXPOSE 8000
 CMD ["./api-gateway"]
