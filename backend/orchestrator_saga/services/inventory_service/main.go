@@ -28,17 +28,17 @@ func initDB() {
 	defer ProductsDB.Unlock()
 
 	ProductsDB.Data = map[string]events.Product{
-		"prod-1": {ID: "prod-1", Name: "Laptop Pro", Description: "Un laptop potente per professionisti.", Price: 1299.99, Available: 100, ImageURL: "https://placehold.co/600x400/595964/FFF?text=Laptop"},
-		"prod-2": {ID: "prod-2", Name: "Mouse Wireless", Description: "Mouse ergonomico e preciso.", Price: 49.50, Available: 50, ImageURL: "https://placehold.co/600x400/595964/FFF?text=Mouse"},
-		"prod-3": {ID: "prod-3", Name: "Tastiera Meccanica", Description: "Tastiera con switch meccanici per gaming.", Price: 120.00, Available: 200, ImageURL: "https://placehold.co/600x400/595964/FFF?text=Tastiera"},
+		"prod-1": {ID: "prod-1", Name: "Laptop Pro", Description: "Un laptop potente per professionisti.", Price: 1299.99, Available: 100, ImageURL: "https://m.media-amazon.com/images/I/61UcV2bDnoL._AC_SL1500_.jpg"},
+		"prod-2": {ID: "prod-2", Name: "Mouse Wireless", Description: "Mouse ergonomico e preciso.", Price: 49.50, Available: 50, ImageURL: "https://m.media-amazon.com/images/I/711bP+FjSQL._AC_SL1500_.jpg"},
+		"prod-3": {ID: "prod-3", Name: "Tastiera Meccanica", Description: "Tastiera con switch meccanici per gaming.", Price: 120.00, Available: 200, ImageURL: "https://m.media-amazon.com/images/I/71kq6u7NA4L._AC_SL1500_.jpg"},
 	}
-	log.Println("[ServizioInventario] Database in-memoria inizializzato.")
+	log.Println("[ServiceInventory] In-memory database initialized.")
 }
 
 func main() {
 	port := os.Getenv("INVENTORY_SERVICE_PORT")
 	if port == "" {
-		log.Fatal("Variabile d'ambiente INVENTORY_SERVICE_PORT non impostata.")
+		log.Fatal("INVENTORY_SERVICE_PORT environment variable not set.")
 	}
 	initDB()
 	http.HandleFunc("/reserve", reserveInventoryHandler)
@@ -49,7 +49,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-// getPriceHandler restituisce il prezzo di un singolo prodotto.
+// getPriceHandler returns the price of a single product.
 func getPriceHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)
@@ -59,7 +59,7 @@ func getPriceHandler(w http.ResponseWriter, r *http.Request) {
 		ProductID string `json:"product_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Corpo della richiesta non valido", http.StatusBadRequest)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -68,7 +68,7 @@ func getPriceHandler(w http.ResponseWriter, r *http.Request) {
 	ProductsDB.RUnlock()
 
 	if !ok {
-		http.Error(w, "Prodotto non trovato", http.StatusNotFound)
+		http.Error(w, "Product not found", http.StatusNotFound)
 		return
 	}
 
@@ -80,7 +80,7 @@ func getPriceHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// catalogHandler gestisce le richieste per ottenere il catalogo prodotti.
+// catalogHandler manages requests to get the product catalog.
 func catalogHandler(w http.ResponseWriter, _ *http.Request) {
 	ProductsDB.RLock()
 	defer ProductsDB.RUnlock()
@@ -93,7 +93,7 @@ func catalogHandler(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(list)
 }
 
-// reserveInventoryHandler gestisce la prenotazione dei prodotti.
+// reserveInventoryHandler manages product reservation.
 func reserveInventoryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)
@@ -102,14 +102,14 @@ func reserveInventoryHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req events.InventoryRequestPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Corpo della richiesta non valido", http.StatusBadRequest)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	ProductsDB.Lock()
 	defer ProductsDB.Unlock()
 
-	// Controlla la disponibilità prima di apportare modifiche
+	// Check availability before making changes
 	for _, item := range req.Items {
 		product, ok := ProductsDB.Data[item.ProductID]
 		if !ok || product.Available < item.Quantity {
@@ -117,25 +117,25 @@ func reserveInventoryHandler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"status":  "error",
-				"message": "Quantità insufficiente o prodotto non trovato per " + item.ProductID,
+				"message": "Insufficient quantity or product not found for " + item.ProductID,
 			})
 			return
 		}
 	}
 
-	// Prenota gli articoli
+	// Book articles
 	for _, item := range req.Items {
 		product := ProductsDB.Data[item.ProductID]
 		product.Available -= item.Quantity
 		ProductsDB.Data[item.ProductID] = product
 	}
 
-	log.Printf("Inventario prenotato per l'Ordine %s", req.OrderID)
+	log.Printf("Inventory booked for Order %s", req.OrderID)
 	w.Header().Set(contentType, contentTypeJSON)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Inventario prenotato"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Booked inventory"})
 }
 
-// cancelReservationHandler gestisce l'annullamento di una prenotazione (compensazione).
+// cancelReservationHandler manages the cancellation of a reservation (compensation).
 func cancelReservationHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)
@@ -144,7 +144,7 @@ func cancelReservationHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req events.InventoryRequestPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Richiesta non valida", http.StatusBadRequest)
+		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
@@ -157,17 +157,17 @@ func cancelReservationHandler(w http.ResponseWriter, r *http.Request) {
 		ProductsDB.Data[item.ProductID] = product
 	}
 
-	log.Printf("Annullata prenotazione inventario per l'Ordine %s", req.OrderID)
+	log.Printf("Canceled inventory reservation for Order %s", req.OrderID)
 	w.Header().Set(contentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",
-		"message": "Prenotazione annullata e inventario ripristinato",
+		"message": "Reservation canceled and inventory restored",
 	}); err != nil {
 		printEncodeError(err, w)
 	}
 }
 
 func printEncodeError(err error, w http.ResponseWriter) {
-	log.Printf("Errore nella codifica della risposta: %v", err)
-	http.Error(w, "Errore interno del server", http.StatusInternalServerError)
+	log.Printf("Error in response coding: %v", err)
+	http.Error(w, "Internal server error", http.StatusInternalServerError)
 }

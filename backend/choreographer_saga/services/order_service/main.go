@@ -131,7 +131,7 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if totalAmount > paymentAmountLimit {
-		reason := fmt.Sprintf("L'importo %.2f supera il limite di %.2f", totalAmount, paymentAmountLimit)
+		reason := fmt.Sprintf("The amount %.2f exceeds the limit of %.2f", totalAmount, paymentAmountLimit)
 		w.Header().Set(contentType, contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"message": reason})

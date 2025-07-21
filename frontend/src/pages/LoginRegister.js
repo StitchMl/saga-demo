@@ -54,7 +54,7 @@ export default function LoginRegister() {
         <Box sx={{ maxWidth: 400, mx: "auto", mt: 4 }}>
             <Tabs value={tab} onChange={(_, v) => setTab(v)} centered>
                 <Tab label="Login" />
-                <Tab label="Registrati" />
+                <Tab label="Register" />
             </Tabs>
             <Box
                 component="form"
@@ -64,7 +64,7 @@ export default function LoginRegister() {
                 {tab === 1 && (
                     <>
                         <TextField
-                            label="Nome"
+                            label="Name"
                             name="name"
                             required
                             onChange={handleChange}
@@ -92,7 +92,7 @@ export default function LoginRegister() {
                     onChange={handleChange}
                 />
                 <Button type="submit" variant="contained">
-                    {tab === 0 ? "Accedi" : "Registrati"}
+                    {tab === 0 ? "Log in" : "Register"}
                 </Button>
             </Box>
 

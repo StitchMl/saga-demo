@@ -11,7 +11,7 @@ import (
 	events "github.com/StitchMl/saga-demo/common/types"
 )
 
-const payloadErrorLogFmt = "Servizio Inventario: Errore nel payload: %v"
+const payloadErrorLogFmt = "Inventory Service: Error in payload: %v"
 
 var eventBus *shared.EventBus
 
@@ -40,19 +40,19 @@ func main() {
 	if port == "" {
 		log.Fatal("INVENTORY_SERVICE_PORT non impostata")
 	}
-	log.Printf("Servizio Inventario avviato sulla porta %s", port)
+	log.Printf("Inventory service started on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func subscribe(t events.EventType, h shared.EventHandler) {
 	if err := eventBus.Subscribe(t, h); err != nil {
-		log.Fatalf("Errore di sottoscrizione %s: %v", t, err)
+		log.Fatalf("Subscription error %s: %v", t, err)
 	}
 }
 
 // ---------- Gestori Eventi ----------
 
-// handleOrderCreatedEvent gestisce la richiesta di creazione ordine
+// handleOrderCreatedEvent handles the order creation request
 func handleOrderCreatedEvent(event events.GenericEvent) {
 	var payload events.OrderCreatedPayload
 	if err := mapToStruct(event.Payload, &payload); err != nil {
@@ -60,35 +60,35 @@ func handleOrderCreatedEvent(event events.GenericEvent) {
 		return
 	}
 
-	log.Printf("Servizio Inventario: Ricevuto OrderCreatedEvent %s per %d articoli", payload.OrderID, len(payload.Items))
+	log.Printf("Inventory Service: Received OrderCreatedEvent %s for %d items", payload.OrderID, len(payload.Items))
 
 	inventorydb.DB.Products.Lock()
 	defer inventorydb.DB.Products.Unlock()
 
 	var totalAmount float64
-	// Per prima cosa, calcola il totale e controlla i prezzi
+	// First, calculate the total and check the prices
 	for i := range payload.Items {
 		product, ok := inventorydb.DB.Products.Data[payload.Items[i].ProductID]
 		if !ok {
-			publishFailure(payload.OrderID, "Prezzo del prodotto non trovato per "+payload.Items[i].ProductID, nil)
+			publishFailure(payload.OrderID, "Product price not found for "+payload.Items[i].ProductID, nil)
 			return
 		}
 		payload.Items[i].Price = product.Price
 		totalAmount += product.Price * float64(payload.Items[i].Quantity)
 	}
 
-	// Poi, controlla la disponibilità e prenota
+	// Then, check availability and book
 	reservedItems := make([]events.OrderItem, 0, len(payload.Items))
 	for _, item := range payload.Items {
 		product := inventorydb.DB.Products.Data[item.ProductID]
 		if product.Available < item.Quantity {
-			// Ripristina eventuali riserve
+			// Restore any reserves
 			for _, r := range reservedItems {
 				p := inventorydb.DB.Products.Data[r.ProductID]
 				p.Available += r.Quantity
 				inventorydb.DB.Products.Data[r.ProductID] = p
 			}
-			publishFailure(payload.OrderID, "Quantità insufficiente per "+item.ProductID, &totalAmount)
+			publishFailure(payload.OrderID, "Insufficient quantity for "+item.ProductID, &totalAmount)
 			return
 		}
 		product.Available -= item.Quantity
@@ -96,7 +96,7 @@ func handleOrderCreatedEvent(event events.GenericEvent) {
 		reservedItems = append(reservedItems, item)
 	}
 
-	publish(events.InventoryReservedEvent, payload.OrderID, "Inventario prenotato",
+	publish(events.InventoryReservedEvent, payload.OrderID, "Booked inventory",
 		events.InventoryRequestPayload{
 			OrderID:    payload.OrderID,
 			CustomerID: payload.CustomerID,
@@ -106,7 +106,7 @@ func handleOrderCreatedEvent(event events.GenericEvent) {
 	)
 }
 
-// handleRevertInventoryEvent gestisce la richiesta di storno dell'inventario
+// handleRevertInventoryEvent manages the inventory reversal request
 func handleRevertInventoryEvent(event events.GenericEvent) {
 	var payload events.InventoryRequestPayload
 	if err := mapToStruct(event.Payload, &payload); err != nil {
@@ -123,10 +123,10 @@ func handleRevertInventoryEvent(event events.GenericEvent) {
 			inventorydb.DB.Products.Data[item.ProductID] = product
 		}
 	}
-	log.Printf("Servizio Inventario: Ripristinati %d articoli per l'Ordine %s.", len(payload.Items), payload.OrderID)
+	log.Printf("Inventory Service: Restored %d items for Order %s.", len(payload.Items), payload.OrderID)
 }
 
-// publishFailure è un helper per pubblicare un evento di fallimento della prenotazione.
+// publishFailure is a helper to publish a booking failure event.
 func publishFailure(orderID, reason string, total *float64) {
 	payload := events.OrderStatusUpdatePayload{
 		OrderID: orderID,
@@ -135,19 +135,19 @@ func publishFailure(orderID, reason string, total *float64) {
 	if total != nil {
 		payload.Total = *total
 	}
-	publish(events.InventoryReservationFailedEvent, orderID, "Prenotazione inventario fallita", payload)
+	publish(events.InventoryReservationFailedEvent, orderID, "Inventory reservation failed", payload)
 }
 
-// publish è un helper per pubblicare un evento.
+// publish is a helper to publish an event.
 func publish(t events.EventType, id, msg string, pl events.EventPayload) {
 	if err := eventBus.Publish(events.NewGenericEvent(t, id, msg, pl)); err != nil {
-		log.Printf("pubblicazione %s: %v", t, err)
+		log.Printf("publication %s: %v", t, err)
 	}
 }
 
 // ---------- Handler HTTP ----------
 
-// catalogHandler gestisce le richieste per ottenere il catalogo prodotti
+// catalogHandler handles requests to get the product catalog
 func catalogHandler(w http.ResponseWriter, _ *http.Request) {
 	inventorydb.DB.Products.RLock()
 	defer inventorydb.DB.Products.RUnlock()
@@ -160,17 +160,17 @@ func catalogHandler(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(list)
 }
 
-// getProductPricesHandler gestisce le richieste per ottenere i prezzi dei prodotti
+// getProductPricesHandler manages requests to obtain product prices
 func getProductPricesHandler(w http.ResponseWriter, r *http.Request) {
 	productID := r.URL.Query().Get("id")
 	if price, ok := inventorydb.GetProductPrice(productID); ok {
 		_ = json.NewEncoder(w).Encode(map[string]float64{"price": price})
 		return
 	}
-	http.Error(w, "prodotto non trovato", http.StatusNotFound)
+	http.Error(w, "product not found", http.StatusNotFound)
 }
 
-// mapToStruct esegue una conversione generica da interface{} a struct tramite JSON.
+// mapToStruct performs a generic conversion from an interface{} to struct via JSON.
 func mapToStruct(src interface{}, dst interface{}) error {
 	b, err := json.Marshal(src)
 	if err != nil {

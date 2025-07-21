@@ -59,7 +59,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, _ := events.HashPassword(u.Password)
 	u.PasswordHash = hash
-	u.Password = "" // Rimuovi la password in chiaro
+	u.Password = "" // Remove unencrypted password
 
 	if u.ID == "" {
 		u.ID = uuid.NewString()
@@ -114,7 +114,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 }
 
-// validateHandler risponde alla richiesta POST /validate
+// validateHandler responds to POST request /validate
 func validateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, errorMethodNotAllowed, http.StatusMethodNotAllowed)

@@ -39,7 +39,7 @@ export default function OrderStatus() {
     // Shallow diff per evitare setState inutili (quindi lampeggi)
     const shouldUpdate = (prev, next) => {
         if (prev.length !== next.length) return true;
-        // confronto semplice: concat di id+status
+        // simple comparison: concat of id+status
         const sig = (arr) => arr.map((o) => o.order_id + ":" + o.status).join("|");
         return sig(prev) !== sig(next);
     };
@@ -69,7 +69,7 @@ export default function OrderStatus() {
         [customerId, fetchAllOrders]
     );
 
-    // Primo load + set polling
+    // First load + set polling
     useEffect(() => {
         if (!customerId) return;
         void fetchOrders(true);
@@ -106,7 +106,7 @@ export default function OrderStatus() {
         <Box sx={{ p: 2 }}>
             <Toolbar disableGutters sx={{ mb: 2, justifyContent: "space-between" }}>
                 <Typography variant="h6" component="div">
-                    I Miei Ordini ({flow})
+                    My Orders ({flow})
                 </Typography>
                 <Stack direction="row" spacing={2} alignItems="center">
                     <Typography variant="caption" color="text.secondary">
@@ -159,7 +159,7 @@ export default function OrderStatus() {
                     ) : (
                         <TableRow>
                             <TableCell colSpan={4} align="center">
-                                Nessun ordine trovato.
+                                No orders found.
                             </TableCell>
                         </TableRow>
                     )}

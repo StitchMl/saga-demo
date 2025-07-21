@@ -42,7 +42,7 @@ type Order struct {
 	Reason     string      `json:"reason,omitempty"`
 }
 
-// Product definisce la struttura di un prodotto.
+// Product defines the structure of a product.
 type Product struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
@@ -54,7 +54,7 @@ type Product struct {
 
 // --- Payload of Events ---
 
-// OrderCreatedPayload dati per l'evento OrderCreated
+// OrderCreatedPayload data for the OrderCreated event
 type OrderCreatedPayload struct {
 	OrderID    string      `json:"order_id"`
 	Items      []OrderItem `json:"items"`
@@ -71,7 +71,7 @@ type InventoryRequestPayload struct {
 	CustomerID string      `json:"customer_id,omitempty"`
 }
 
-// PaymentPayload dati comuni per PaymentProcessed e PaymentFailed
+// PaymentPayload common data for PaymentProcessed and PaymentFailed
 type PaymentPayload struct {
 	OrderID    string  `json:"order_id"`
 	CustomerID string  `json:"customer_id,omitempty"`
@@ -79,7 +79,7 @@ type PaymentPayload struct {
 	Reason     string  `json:"reason,omitempty"`
 }
 
-// OrderStatusUpdatePayload Dati per gli eventi di aggiornamento dello stato dell'ordine.
+// OrderStatusUpdatePayload Data for order status update events.
 type OrderStatusUpdatePayload struct {
 	OrderID string  `json:"order_id"`
 	Total   float64 `json:"total,omitempty"`
@@ -87,13 +87,13 @@ type OrderStatusUpdatePayload struct {
 	Reason  string  `json:"reason,omitempty"`
 }
 
-// GenericEvent wrapper per tutti i payload degli eventi
+// GenericEvent wrapper for all event payloads
 type GenericEvent struct {
 	BaseEvent
 	Payload EventPayload `json:"payload"`
 }
 
-// NewGenericEvent crea un nuovo evento generico con i dati di base e il payload specifico.
+// NewGenericEvent creates a new generic event with the base data and the specific payload.
 func NewGenericEvent(eventType EventType, orderID, details string, payload EventPayload) GenericEvent {
 	return GenericEvent{
 		BaseEvent: BaseEvent{

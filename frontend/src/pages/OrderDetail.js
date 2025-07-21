@@ -39,7 +39,7 @@ export default function OrderDetail() {
                 setOrder(data);
             } catch (e) {
                 console.error(e);
-                setError("Impossibile recuperare i dettagli dell'ordine.");
+                setError("Unable to retrieve order details.");
             } finally {
                 setLoading(false);
             }

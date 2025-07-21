@@ -11,7 +11,7 @@ import (
 )
 
 // --------------------------------------------------------------------
-//  Database in-memoria del gateway – condiviso da entrambe le modalità
+//  Gateway in-memory database - shared by both modes
 // --------------------------------------------------------------------
 
 var (

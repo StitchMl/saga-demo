@@ -63,11 +63,11 @@ export default function CreateOrder() {
                     if (updatedOrder.status === 'approved') {
                         setSnack({
                             open: true,
-                            msg: `Ordine (${flow}) approvato con successo! ID: ${orderId}`,
+                            msg: `Order (${flow}) approved successfully! ID: ${orderId}`,
                             severity: "success"
                         });
                     } else { // rejected
-                        const finalMessage = `Ordine Rifiutato: ${updatedOrder.reason || 'Motivo sconosciuto'}`;
+                        const finalMessage = `Rejected Order: ${updatedOrder.reason || 'Unknown reason'}`;
                         setError(finalMessage);
                         setSnack({ open: true, msg: finalMessage, severity: "error" });
                     }
@@ -75,13 +75,13 @@ export default function CreateOrder() {
             } catch (pollErr) {
                 clearInterval(interval);
                 setLoading(false);
-                const errorMsg = "Impossibile verificare lo stato finale dell'ordine.";
+                const errorMsg = "Unable to verify final order status.";
                 setError(errorMsg);
                 setSnack({ open: true, msg: errorMsg, severity: "error" });
             }
         }, 2000);
 
-        // Timeout di sicurezza per interrompere il polling
+        // Security timeout to interrupt polling
         setTimeout(() => {
             clearInterval(interval);
         }, 30000);
@@ -108,7 +108,7 @@ export default function CreateOrder() {
             const { data } = await createOrder(order);
 
             if (flow === 'orchestrated') {
-                // Il flusso orchestrato è sincrono e restituisce 200 OK in caso di successo
+                // The orchestrated flow is synchronous and returns 200 OK if successful
                 setLoading(false);
                 setItems([{ id: Date.now(), productId: "", qty: 1 }]);
                 setSnack({
@@ -126,7 +126,7 @@ export default function CreateOrder() {
                 pollOrderStatus(data.order_id);
             }
         } catch (err) {
-            const errorMsg = err.response?.data?.reason || err.response?.data?.message || "Errore sconosciuto";
+            const errorMsg = err.response?.data?.reason || err.response?.data?.message || "Unknown error";
             const finalMessage = `Order Rejected: ${errorMsg}`;
             setError(finalMessage);
             setSnack({ open: true, msg: finalMessage, severity: "error" });

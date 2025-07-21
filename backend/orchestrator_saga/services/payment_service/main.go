@@ -59,7 +59,7 @@ func processPaymentHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req events.PaymentPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// rispondi SEMPRE in JSON: l’Orchestrator si aspetta JSON
+		// ALWAYS respond in JSON: the Orchestrator expects JSON
 		w.Header().Set(contentType, contentTypeJSON)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
@@ -135,7 +135,7 @@ func revertPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	defer transactionsDB.Unlock()
 
 	if transactionsDB.Data[req.OrderID] != "processed" {
-		// Se il pagamento non è stato processato, consideriamo la compensazione un successo.
+		// If the payment has not been processed, we consider the compensation a success.
 		log.Printf("Payment for order %s was not processed, no need to revert.", req.OrderID)
 		w.Header().Set(contentType, contentTypeJSON)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Payment not processed, no action taken"})

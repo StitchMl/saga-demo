@@ -19,7 +19,7 @@ const AuthRedirect = () => {
     const navigate = useNavigate();
 
     useEffect(() => {
-        // Se customerId diventa null/vuoto e non siamo già sulla pagina di login, reindirizza.
+        // If customerId becomes null/empty and we are not already on the login page, redirect.
         if (!customerId && window.location.pathname !== '/login') {
             navigate('/login');
         }

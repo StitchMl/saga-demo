@@ -96,11 +96,11 @@ export default function Catalog() {
                                 disabled={p.available === 0}
                                 onClick={() => navigate("/create", { state: { product: p } })}
                             >
-                                Ordina
+                                Order
                             </Button>
                             {/* a manual refresh, without triggering the loading spinner */}
                             <Button size="small" onClick={fetchData}>
-                                Aggiorna disponibilità
+                                Update availability
                             </Button>
                         </CardActions>
                     </Card>

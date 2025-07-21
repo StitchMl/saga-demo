@@ -46,8 +46,8 @@ export default function NavBar() {
                     onChange={(_, v) => v && setFlow(v)}
                     sx={{ "& .MuiToggleButton-root": { textTransform: "none", px: 1.5 } }}
                 >
-                    <ToggleButton value="choreographed">Coreografia</ToggleButton>
-                    <ToggleButton value="orchestrated">Orchestrazione</ToggleButton>
+                    <ToggleButton value="choreographed">Choreography</ToggleButton>
+                    <ToggleButton value="orchestrated">Orchestration</ToggleButton>
                 </ToggleButtonGroup>
 
                 <Box sx={{ ml: 3 }}>
@@ -57,7 +57,7 @@ export default function NavBar() {
                         </Button>
                     ) : (
                         <Button component={Link} to="/login" color="inherit">
-                            Login / Registrati
+                            Login / Register
                         </Button>
                     )}
                 </Box>
