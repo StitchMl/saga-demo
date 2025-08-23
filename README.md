@@ -159,8 +159,8 @@ The tests demonstrate that in each failure scenario, the compensating SAGA is ex
 A script is provided to automate deployment to an Ubuntu-based EC2 instance.
 
 ```bash
-# Usage: ./deploy_ec2.sh <user>@<host> /path/to/key.pem
-./scripts/deploy_ec2.sh ubuntu@ec2-xx-xx-xx-xx.compute-1.amazonaws.com ~/.ssh/my-key.pem
+# Usage: ./deploy_ec2.sh <user>@<host> /path/to/keys.pem
+./scripts/deploy_ec2.sh ubuntu@ec2-xx-xx-xx-xx.compute-1.amazonaws.com ~/.ssh/my-keys.pem
 ```
 The script handles:
 1. Verifying SSH connectivity.
