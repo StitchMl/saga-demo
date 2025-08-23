@@ -71,9 +71,14 @@ chmod 600 "$TEMP_KEY_PATH"
 # Options to make SSH non-interactive
 SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
+# shellcheck disable=SC2034
 REPO_URL="https://github.com/StitchMl/saga-demo.git" # Git repository URL (HTTPS format)
 PROJECT_NAME="saga-demo" # Project folder name
 PROJECT_DIR="/home/${EC2_USER}/${PROJECT_NAME}" # Destination path on EC2
+
+# Path to the local project root (one level above the script directory). This is used to package the local
+# repository when deploying without cloning from GitHub.
+LOCAL_PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
 
 # --- Deployment Steps ---
 
@@ -181,37 +186,183 @@ EOF
 log_info "Prerequisites check completed."
 
 log_info "Cleaning up existing project on EC2 (if present)..."
-ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "rm -rf ${PROJECT_DIR}"
+ssh "${SSH_OPTIONS[@]}" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "rm -rf ${PROJECT_DIR}"
 log_info "Cleanup complete."
 
-log_info "Cloning Git repository onto EC2 instance..."
-# Using HTTPS URL. This will work for public repositories.
-# Use --depth 1 for a shallow clone and --quiet to suppress progress meter to avoid hangs.
-# Use GIT_TERMINAL_PROMPT=0 to ensure it doesn't wait for credentials.
-ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "GIT_TERMINAL_PROMPT=0 git clone --depth 1 --quiet ${REPO_URL} ${PROJECT_DIR}"
-log_info "Repository cloning complete."
+log_info "Copying local project onto EC2 instance..."
+# Create a temporary archive of the local project directory. The archive is created in /tmp and removed after use.
+ARCHIVE_PATH=$(mktemp /tmp/${PROJECT_NAME}_archive.XXXXXX.tar.gz)
+tar -czf "$ARCHIVE_PATH" -C "$LOCAL_PROJECT_ROOT" .
+# Transfer the archive to the EC2 instance. It will be saved in the home directory of the EC2 user.
+scp "${SSH_OPTIONS[@]}" -i "$TEMP_KEY_PATH" "$ARCHIVE_PATH" "${EC2_TARGET}:/home/${EC2_USER}/${PROJECT_NAME}.tar.gz"
+# Remove the local temporary archive.
+rm -f "$ARCHIVE_PATH"
+# On the EC2 host: remove any existing project directory, extract the new archive, and clean up the archive file.
+ssh "${SSH_OPTIONS[@]}" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "rm -rf ${PROJECT_DIR} && mkdir -p /home/${EC2_USER} && tar -xzf ${PROJECT_NAME}.tar.gz -C /home/${EC2_USER} && rm -f ${PROJECT_NAME}.tar.gz"
+log_info "Project files copied to EC2."
 
-log_info "Setting up environment and starting the application..."
+log_info "Generating Go module files on EC2 instance..."
+# The go.mod and go.sum files might not be in git, so we generate them.
+# This creates a single module in the backend with replace directives for local packages.
+ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "PROJECT_DIR=${PROJECT_DIR} bash -s" << 'EOF'
+    set -e
+    # Ensure Go is installed to run go mod commands
+    if ! command -v go &> /dev/null; then
+        echo "Installing Go..."
+        if command -v dnf &> /dev/null; then
+            sudo dnf install -y golang
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y golang
+        elif command -v apt-get &> /dev/null; then
+            sudo apt-get update -y && sudo apt-get install -y golang
+        else
+            echo "ERROR: Could not install Go. No supported package manager found." >&2
+            exit 1
+        fi
+    fi
 
+    echo "Initializing Go module in the backend directory..."
+    cd "$PROJECT_DIR/backend"
+    go mod init github.com/StitchMl/saga-demo
+
+    echo "Adding local replace directives to go.mod..."
+    # These directives tell Go to use the local directories for these packages.
+    echo "replace github.com/StitchMl/saga-demo/choreographer_saga/shared => ./choreographer_saga/shared" >> go.mod
+    echo "replace github.com/StitchMl/saga-demo/common/payment_gateway => ./common/payment_gateway" >> go.mod
+    echo "replace github.com/StitchMl/saga-demo/common/types => ./common/types" >> go.mod
+
+    echo "Running 'go mod tidy' to fetch dependencies..."
+    go mod tidy
+
+    echo "Vendoring dependencies for Docker build..."
+    go mod vendor
+EOF
+log_info "Go module files generated."
+
+log_info "Building Go binaries on EC2 instance..."
+# Pre-build all Go applications on the EC2 host.
+# This is more reliable than building inside Docker with complex contexts.
+ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "PROJECT_DIR=${PROJECT_DIR} bash -s" << 'EOF'
+    set -e
+    cd "$PROJECT_DIR/backend"
+    # Find all main.go files and build them.
+    find . -type f -name 'main.go' | while read -r mainfile; do
+        servicedir=$(dirname "$mainfile")
+        servicename=$(basename "$servicedir")
+        output_path="$servicedir/$servicename"
+        # The package path must be relative to the module defined in go.mod.
+        packagepath="github.com/StitchMl/saga-demo/${servicedir#./}"
+
+        echo "Building $packagepath -> $output_path"
+        CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o "$output_path" "$packagepath"
+    done
+EOF
+log_info "Go binaries built successfully."
+
+
+log_info "Patching Dockerfiles to use pre-built binaries..."
+# The Dockerfiles are patched to simply copy the pre-built binary,
+# skipping the Go build process inside Docker entirely.
 ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "PROJECT_DIR=${PROJECT_DIR} bash -s" << 'EOF'
     set -e
     cd "$PROJECT_DIR"
-    # Create a minimal .env file for docker-compose. Use the internal Docker network for the frontend to reach the API gateway.
-    # This avoids hard-coded localhost references and works in both EC2 and Docker contexts.
-    cat > .env <<'EOL'
-REACT_APP_API_BASE_URL=http://api-gateway:8000
-GATEWAY_PORT=8000
-EOL
-    # Determine the appropriate docker compose command (v2 or v1) and start the services.
-    COMPOSE_CMD="sudo docker compose"
-    # Fallback to the legacy binary if the plugin isn't available.
-    if ! docker compose version &> /dev/null && command -v docker-compose &> /dev/null; then
-        COMPOSE_CMD="sudo docker-compose"
+    # Find all Dockerfiles and patch them
+    find . -type f -name 'Dockerfile' | while read -r dockerfile; do
+        echo "Patching $dockerfile..."
+        # Get the service name from the final part of the directory path
+        servicename=$(basename "$(dirname "$dockerfile")")
+        # Get the relative path to the service directory from the project root
+        servicedir_from_root=$(dirname "${dockerfile#./}")
+
+        # Create a new, simplified Dockerfile content
+        new_dockerfile_content=$(cat <<END
+# Using a pre-built binary from the EC2 host
+FROM alpine:3.19
+WORKDIR /root/
+# Copy the pre-built binary into the final image.
+# The path is relative to the docker-compose.yml file at the project root.
+COPY ${servicedir_from_root}/${servicename} .
+CMD ["./${servicename}"]
+END
+)
+        # Overwrite the original Dockerfile with the new simplified content
+        echo "$new_dockerfile_content" > "$dockerfile"
+    done
+EOF
+log_info "Dockerfiles patched successfully."
+
+log_info "Creating .env file for Docker Compose..."
+# This file provides environment variables to the docker-compose services.
+# The frontend service should be configured to use this variable to avoid hardcoded URLs.
+ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "PROJECT_DIR=${PROJECT_DIR} EC2_HOST=${EC2_HOST} bash -s" << 'EOF'
+    set -e
+    # The API Gateway is assumed to be running on port 8090 on the host.
+    # The frontend code should use this environment variable to make API calls.
+    # This prevents the frontend from redirecting to placeholder URLs like the AWS console.
+    echo "GATEWAY_URL=http://${EC2_HOST}:8090" > "${PROJECT_DIR}/.env"
+    echo "INFO: Created .env file in ${PROJECT_DIR}"
+EOF
+log_info ".env file created."
+
+log_info "Starting Docker Compose on EC2 instance..."
+# Use sudo to avoid permissions issues with the docker socket after a fresh install.
+# Detect and use 'docker compose' (v2) if available, otherwise fallback to 'docker-compose' (v1).
+ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "PROJECT_DIR=${PROJECT_DIR} bash -s" << 'EOF'
+    set -e
+    cd "$PROJECT_DIR"
+
+    COMPOSE_CMD="sudo docker-compose"
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="sudo docker compose"
     fi
-    echo "Using '$COMPOSE_CMD' to build and start the containers..."
+
+    echo "Using '$COMPOSE_CMD' to start the application..."
+    # Build and start all services. The Dockerfiles now handle the vendored dependencies correctly.
     $COMPOSE_CMD up -d --build
+EOF
+log_info "Docker Compose started successfully on the EC2 instance."
+
+log_info "Waiting for services to initialize and checking their status..."
+ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "PROJECT_DIR=${PROJECT_DIR} bash -s" << 'EOF'
+    set -e
+    cd "$PROJECT_DIR"
+
+    COMPOSE_CMD="sudo docker-compose"
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="sudo docker compose"
+    fi
+
+    echo "--- Waiting for frontend to compile (max 90s)... ---"
+    max_wait=90
+    interval=5
+    elapsed=0
+    while true; do
+        # Check frontend logs for the success message. The service name is assumed to be 'frontend'.
+        if $COMPOSE_CMD logs frontend | grep -q "Compiled successfully!"; then
+            echo "Frontend has compiled successfully!"
+            break
+        fi
+
+        if [ $elapsed -ge $max_wait ]; then
+            echo "WARNING: Frontend did not show 'Compiled successfully!' message within ${max_wait} seconds."
+            break
+        fi
+
+        echo "Waiting for frontend... (elapsed: ${elapsed}s)"
+        sleep $interval
+        elapsed=$((elapsed + interval))
+    done
+
+    echo "--- Container Status (docker-compose ps) ---"
+    $COMPOSE_CMD ps
 EOF
 
 log_info "Deployment completed successfully!"
-echo "Access the frontend application at: http://${EC2_HOST}:8090"
-echo "Access the API Gateway at:  http://${EC2_HOST}:8000"
+# The command for manual ssh connection should use the original key path, not the temporary one.
+echo "You can check the status of the services with: ssh -i $SSH_KEY_PATH ${EC2_TARGET} 'cd ${PROJECT_DIR} && sudo docker-compose ps'"
+echo "Access the application at: http://${EC2_HOST}:8090"
+echo "Access the RabbitMQ UI at: http://${EC2_HOST}:15672 (user: guest, password: guest)"
+
+# --- Final step: Tail logs from the server ---
+log_info "Tailing logs from the server. Press Ctrl+C to exit."
+ssh "$SSH_OPTIONS" -i "$TEMP_KEY_PATH" "${EC2_TARGET}" "cd ${PROJECT_DIR} && sudo docker-compose logs -f"
