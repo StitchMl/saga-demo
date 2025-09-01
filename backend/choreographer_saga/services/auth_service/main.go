@@ -18,6 +18,10 @@ const (
 	ContentType           = "Content-Type"
 )
 
+func init() {
+	inventorydb.InitDB()
+}
+
 /* ---------- HTTP handlers  ---------- */
 
 // registerHandler handles user registration requests.

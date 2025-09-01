@@ -29,18 +29,18 @@ func initDB() {
 	defer UsersDB.Unlock()
 	UsersDB.Data = []events.User{
 		{
-			ID:           "user-1",
+			ID:           "user1",
 			Name:         "Mario Rossi",
 			Email:        "mario.rossi@example.com",
-			Username:     "mario.rossi",
-			PasswordHash: func() string { h, _ := events.HashPassword("password123"); return h }(),
+			Username:     "user1",
+			PasswordHash: func() string { h, _ := events.HashPassword("pass1"); return h }(),
 		},
 		{
-			ID:           "user-2",
+			ID:           "user2",
 			Name:         "Luca Bianchi",
 			Email:        "luca.bianchi@example.com",
-			Username:     "luca.bianchi",
-			PasswordHash: func() string { h, _ := events.HashPassword("password456"); return h }(),
+			Username:     "user2",
+			PasswordHash: func() string { h, _ := events.HashPassword("pass2"); return h }(),
 		},
 	}
 	log.Println("[AuthService] In-memory user database initialized.")

@@ -28,9 +28,9 @@ func initDB() {
 	defer ProductsDB.Unlock()
 
 	ProductsDB.Data = map[string]events.Product{
-		"prod-1": {ID: "laptop-pro", Name: "Laptop Pro", Description: "A powerful laptop for professionals.", Price: 1299.99, Available: 100, ImageURL: "https://m.media-amazon.com/images/I/61UcV2bDnoL._AC_SL1500_.jpg"},
-		"prod-2": {ID: "mouse-wireless", Name: "Mouse Wireless", Description: "Ergonomic and precise mouse.", Price: 49.50, Available: 50, ImageURL: "https://m.media-amazon.com/images/I/711bP+FjSQL._AC_SL1500_.jpg"},
-		"prod-3": {ID: "mechanical-keyboard", Name: "Mechanical Keyboard", Description: "Keyboard with mechanical switches for gaming.", Price: 120.00, Available: 200, ImageURL: "https://m.media-amazon.com/images/I/71kq6u7NA4L._AC_SL1500_.jpg"},
+		"laptop-pro":          {ID: "laptop-pro", Name: "Laptop Pro", Description: "A powerful laptop for professionals.", Price: 1299.99, Available: 100, ImageURL: "https://m.media-amazon.com/images/I/61UcV2bDnoL._AC_SL1500_.jpg"},
+		"mouse-wireless":      {ID: "mouse-wireless", Name: "Mouse Wireless", Description: "Ergonomic and precise mouse.", Price: 49.50, Available: 50, ImageURL: "https://m.media-amazon.com/images/I/711bP+FjSQL._AC_SL1500_.jpg"},
+		"mechanical-keyboard": {ID: "mechanical-keyboard", Name: "Mechanical Keyboard", Description: "Keyboard with mechanical switches for gaming.", Price: 120.00, Available: 200, ImageURL: "https://m.media-amazon.com/images/I/71kq6u7NA4L._AC_SL1500_.jpg"},
 	}
 	log.Println("[ServiceInventory] In-memory database initialized.")
 }
