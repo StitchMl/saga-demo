@@ -104,6 +104,8 @@ services:
       - orchestrator
       - choreographer-auth-service
       - orchestrator-auth-service
+      - choreographer-payment-service
+      - orchestrator-payment-service
 
   # --- Frontend Service ---
   frontend:
