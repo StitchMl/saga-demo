@@ -7,13 +7,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var ns = uuid.New()
-
 // User Represents a registered user.
 // During registration, the Password field will contain the plain text password.
 // When stored or retrieved, the PasswordHash field will contain the hash.
 type User struct {
 	ID           string `json:"id"`
+	NS           string `json:"ns,omitempty"`
 	Name         string `json:"name"`
 	Email        string `json:"email"`
 	Username     string `json:"username" binding:"required"`
@@ -25,11 +24,13 @@ type User struct {
 type AuthRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	NS       string `json:"ns,omitempty"`
 }
 
 // AuthResponse represents the payload for a successful login response.
 type AuthResponse struct {
 	CustomerID string `json:"customer_id"`
+	NS         string `json:"ns,omitempty"`
 	Valid      bool   `json:"valid"`
 }
 
@@ -48,7 +49,12 @@ func CheckPassword(hash, password string) error {
 }
 
 // StableCustomerID generate always the same ID for the same username (case-insensitive)
-func StableCustomerID(username string) string {
+func StableCustomerID(username string, ns string) string {
 	uname := strings.ToLower(strings.TrimSpace(username))
-	return uuid.NewSHA1(ns, []byte(uname)).String() // UUID v5-like (SHA-1)
+	p, err := uuid.Parse(strings.TrimSpace(ns))
+	if err != nil {
+		// fallback: if the ns is invalid, it generates a name-based UUID about a zero-NS.
+		p = uuid.Nil
+	}
+	return uuid.NewSHA1(p, []byte(uname)).String()
 }
