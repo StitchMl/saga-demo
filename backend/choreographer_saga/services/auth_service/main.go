@@ -45,7 +45,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	u.Password = "" // Clear plain text password
 
 	if u.ID == "" {
-		u.ID = "custom-" + uuid.NewString()
+		u.ID = uuid.NewString()
 	}
 
 	inventorydb.DB.Users.Lock()
