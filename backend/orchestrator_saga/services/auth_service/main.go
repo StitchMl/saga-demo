@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	events "github.com/StitchMl/saga-demo/common/types"
-	"github.com/google/uuid"
 )
 
 const (
@@ -62,7 +61,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	u.Password = "" // Remove unencrypted password
 
 	if u.ID == "" {
-		u.ID = uuid.NewString()
+		u.ID = events.StableCustomerID(u.Username)
 	}
 
 	UsersDB.Lock()

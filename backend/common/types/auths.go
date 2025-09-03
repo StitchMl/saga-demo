@@ -1,8 +1,13 @@
 package events
 
 import (
+	"strings"
+
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
+
+var ns = uuid.New()
 
 // User Represents a registered user.
 // During registration, the Password field will contain the plain text password.
@@ -40,4 +45,10 @@ func HashPassword(password string) (string, error) {
 // CheckPassword checks whether the password matches its hash.
 func CheckPassword(hash, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}
+
+// StableCustomerID generate always the same ID for the same username (case-insensitive)
+func StableCustomerID(username string) string {
+	uname := strings.ToLower(strings.TrimSpace(username))
+	return uuid.NewSHA1(ns, []byte(uname)).String() // UUID v5-like (SHA-1)
 }

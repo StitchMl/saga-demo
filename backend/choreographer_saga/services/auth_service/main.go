@@ -8,7 +8,6 @@ import (
 
 	inventorydb "github.com/StitchMl/saga-demo/common/data_store"
 	events "github.com/StitchMl/saga-demo/common/types"
-	"github.com/google/uuid"
 )
 
 const (
@@ -45,7 +44,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	u.Password = "" // Clear plain text password
 
 	if u.ID == "" {
-		u.ID = uuid.NewString()
+		u.ID = events.StableCustomerID(u.Username)
 	}
 
 	inventorydb.DB.Users.Lock()
